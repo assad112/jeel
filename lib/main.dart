@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'splash_screen.dart';
+import 'biometric_gate_screen.dart';
 
 void main() {
   runApp(
     const MaterialApp(
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.light,
-      home: SplashScreen(),
+      home: BiometricGateScreen(),
     ),
   );
 }

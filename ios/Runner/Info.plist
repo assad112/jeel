@@ -50,6 +50,10 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>يحتاج التطبيق للوصول إلى الشبكة المحلية للاتصال بخادم Jeel ERP</string>
 	
+	<!-- Face ID Usage Description (Required for Face ID authentication) -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>We need Face ID access to authenticate you securely</string>
+	
 	<!-- السماح بالاتصالات غير المشفرة (HTTP) للشبكة المحلية -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
