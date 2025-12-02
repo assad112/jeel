@@ -7,8 +7,14 @@ import 'widgets/professional_loader.dart';
 class WebViewScreen extends StatefulWidget {
   final String url;
   final String title;
+  final WebViewController? preloadedController;
 
-  const WebViewScreen({super.key, required this.url, required this.title});
+  const WebViewScreen({
+    super.key,
+    required this.url,
+    required this.title,
+    this.preloadedController,
+  });
 
   @override
   State<WebViewScreen> createState() => _WebViewScreenState();
@@ -29,6 +35,21 @@ class _WebViewScreenState extends State<WebViewScreen> with SingleTickerProvider
       duration: const Duration(seconds: 2),
     )..repeat();
 
+    // استخدام الـ controller المحمل مسبقاً إذا كان متاحاً، وإلا إنشاء واحد جديد
+    if (widget.preloadedController != null) {
+      _controller = widget.preloadedController!;
+      // افترض أن الصفحة محملة بالفعل عند استخدام preloaded controller
+      _isLoading = false;
+      // إضافة navigation delegate للتحديثات إذا لم يكن موجوداً
+      _attachNavigationDelegate();
+      // إذا كان محمل مسبقاً، تحقق من حالة التحميل بسرعة
+      _checkPreloadedPageStatus();
+    } else {
+      _initializeController();
+    }
+  }
+
+  void _initializeController() {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
@@ -96,6 +117,122 @@ class _WebViewScreenState extends State<WebViewScreen> with SingleTickerProvider
         ),
       )
       ..loadRequest(Uri.parse(widget.url));
+  }
+
+  // إرفاق navigation delegate للـ controller المحمل مسبقاً
+  void _attachNavigationDelegate() {
+    _controller.setNavigationDelegate(
+      NavigationDelegate(
+        onProgress: (int progress) {
+          if (mounted) {
+            setState(() {
+              _progress = progress / 100;
+            });
+          }
+        },
+        onPageStarted: (String url) {
+          if (mounted) {
+            setState(() {
+              _isLoading = true;
+              _isError = false;
+            });
+          }
+        },
+        onPageFinished: (String url) async {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _progress = 0;
+            });
+            
+            // محاولة ملء بيانات الدخول تلقائياً (إن وُجدت) في صفحة تسجيل الدخول
+            await _autoFillFromStoredCredentials();
+          }
+        },
+        onWebResourceError: (WebResourceError error) {
+          debugPrint(
+            'Error code: ${error.errorCode}, Desc: ${error.description}',
+          );
+
+          if (mounted) {
+            setState(() {
+              _isError = true;
+              _isLoading = false;
+            });
+          }
+        },
+        onNavigationRequest: (NavigationRequest request) async {
+          // السماح بالتنقل داخل نفس الموقع فقط
+          final currentUrl = Uri.parse(widget.url);
+          final requestUrl = Uri.parse(request.url);
+          
+          // إذا كان الرابط لا يبدأ بـ http/https، افتحه في متصفح خارجي
+          if (!request.url.startsWith('http')) {
+            final Uri uri = Uri.parse(request.url);
+            if (await canLaunchUrl(uri)) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+            return NavigationDecision.prevent;
+          }
+
+          // منع فتح YouTube في WebView
+          if (request.url.startsWith('https://www.youtube.com/')) {
+            return NavigationDecision.prevent;
+          }
+
+          // السماح بالتنقل داخل نفس النطاق (erp.jeel.om)
+          if (requestUrl.host == currentUrl.host || 
+              requestUrl.host.contains('jeel.om') ||
+              requestUrl.host.contains('erp.jeel.om')) {
+            return NavigationDecision.navigate;
+          }
+
+          // السماح بالتنقل داخل نفس الموقع
+          return NavigationDecision.navigate;
+        },
+      ),
+    );
+  }
+
+  // التحقق من حالة الصفحة المحملة مسبقاً
+  Future<void> _checkPreloadedPageStatus() async {
+    if (!mounted) return;
+    
+    // التحقق فوراً من أن الصفحة تم تحميلها بالفعل
+    try {
+      final currentUrl = await _controller.currentUrl();
+      if (currentUrl != null && currentUrl.isNotEmpty) {
+        // الصفحة محملة بالفعل، لا حاجة لإظهار loader
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _isError = false;
+            _progress = 1.0;
+          });
+          
+          // محاولة ملء بيانات الدخول تلقائياً بعد قليل
+          await Future.delayed(const Duration(milliseconds: 300));
+          if (mounted) {
+            await _autoFillFromStoredCredentials();
+          }
+        }
+      } else {
+        // الصفحة لم تكتمل بعد، أظهر loader
+        if (mounted) {
+          setState(() {
+            _isLoading = true;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking preloaded page status: $e');
+      // في حالة الخطأ، افترض أن الصفحة تحتاج تحميل
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+        });
+      }
+    }
   }
 
   @override
@@ -243,8 +380,6 @@ class _WebViewScreenState extends State<WebViewScreen> with SingleTickerProvider
             if (_isLoading && !_isError)
               ProfessionalLoader(
                 rotationController: _loadingAnimationController,
-                message: 'جاري تحميل Jeel ERP...',
-                progress: _progress > 0 ? _progress : null,
               ),
           ],
         ),
