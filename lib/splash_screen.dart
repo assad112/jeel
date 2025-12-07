@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'login_test.dart';
 import 'webview_screen.dart';
 import 'settings_service.dart';
 import 'utils/assets_helper.dart';
@@ -75,7 +76,7 @@ class _SplashScreenState extends State<SplashScreen> {
             onNavigationRequest: (NavigationRequest request) async {
               final currentUrl = Uri.parse(_url);
               final requestUrl = Uri.parse(request.url);
-              
+
               // If link doesn't start with http/https, open in external browser
               if (!request.url.startsWith('http')) {
                 final Uri uri = Uri.parse(request.url);
@@ -91,7 +92,7 @@ class _SplashScreenState extends State<SplashScreen> {
               }
 
               // Allow navigation within the same domain (erp.jeel.om)
-              if (requestUrl.host == currentUrl.host || 
+              if (requestUrl.host == currentUrl.host ||
                   requestUrl.host.contains('jeel.om') ||
                   requestUrl.host.contains('erp.jeel.om')) {
                 return NavigationDecision.navigate;
@@ -107,10 +108,10 @@ class _SplashScreenState extends State<SplashScreen> {
 
       // Start timeout as maximum wait time (10 seconds)
       _startTimeout();
-      
+
       // Wait until loading completes or timeout ends
       await _waitForPageLoad();
-      
+
       // Navigate after loading completes (without biometric check here)
       if (mounted && !_hasNavigated) {
         await Future.delayed(const Duration(milliseconds: 500));
@@ -118,7 +119,6 @@ class _SplashScreenState extends State<SplashScreen> {
           _navigateToHome();
         }
       }
-      
     } catch (e) {
       debugPrint('Error initializing preload: $e');
       // In case of error, use default values
@@ -166,11 +166,12 @@ class _SplashScreenState extends State<SplashScreen> {
       if (context.mounted) {
         navigator.pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) => WebViewScreen(
-              url: _url,
-              title: _title,
-              preloadedController: _preloadedController,
-            ),
+            builder: (context) => LoginPage(),
+            // builder: (context) => WebViewScreen(
+            //   url: _url,
+            //   title: _title,
+            //   preloadedController: _preloadedController,
+            // ),
           ),
           (route) => false,
         );
@@ -272,4 +273,3 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 }
-
