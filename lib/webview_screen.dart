@@ -575,7 +575,7 @@ class _WebViewScreenState extends State<WebViewScreen>
         // ============================================================
         // MODE SIMPAN (SAVE MODE)
         // ============================================================
-        debugPrint('💾 Mode: Menyimpan Kredensial Baru');
+        debugPrint('💾 Mode: Storing New Credentials');
 
         // Ambil teks yang sedang diketik user di WebView saat ini
         await _extractCredentialsFromForm();
@@ -586,7 +586,7 @@ class _WebViewScreenState extends State<WebViewScreen>
             _capturedPassword!.isNotEmpty) {
           // Minta konfirmasi sidik jari untuk menyimpan
           final authenticated = await BiometricService.authenticate(
-            reason: 'Konfirmasi sidik jari untuk MENYIMPAN password ini',
+            reason: 'Confirm fingerprint to SAVE this password',
           );
 
           if (authenticated) {
@@ -606,7 +606,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Password TERSIMPAN! Besok cukup scan jari.',
+                          'Password SAVED! Next time, just scan your finger.',
                         ),
                       ),
                     ],
@@ -622,12 +622,12 @@ class _WebViewScreenState extends State<WebViewScreen>
           }
         } else {
           // Jika user menekan tombol tapi form masih kosong
-          debugPrint('⚠️ Form kosong, tidak bisa menyimpan');
+          debugPrint('⚠️ Form is empty, cannot save');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text(
-                  '⚠️ Ketik Username & Password dulu, lalu tekan tombol ini untuk menyimpan.',
+                  '⚠️ Enter your Username & Password first, then press this button to save.',
                 ),
                 backgroundColor: Colors.orange,
               ),
@@ -638,17 +638,17 @@ class _WebViewScreenState extends State<WebViewScreen>
         // ============================================================
         // MODE LOGIN (FILL MODE)
         // ============================================================
-        debugPrint('🔑 Mode: Login dengan Data Tersimpan');
+        debugPrint('🔑 Mode: Login with Saved Data');
 
         final authenticated = await BiometricService.authenticate(
-          reason: 'Scan sidik jari untuk LOGIN',
+          reason: 'Scan fingerprint to LOGIN',
         );
 
         if (authenticated) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Autentikasi Sukses, Masuk...'),
+                content: Text('Authentication Successful, Logging in...'),
                 backgroundColor: Colors.green,
                 duration: Duration(milliseconds: 1000),
               ),
