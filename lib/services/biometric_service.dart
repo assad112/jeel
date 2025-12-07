@@ -1,24 +1,22 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:local_auth_android/local_auth_android.dart';
 
-/// خدمة المصادقة الحيوية (البصمة/الوجه)
 class BiometricService {
   static final LocalAuthentication _auth = LocalAuthentication();
 
-  /// التحقق من توفر المصادقة الحيوية
   static Future<bool> isAvailable() async {
     try {
-      final isAvailable = await _auth.canCheckBiometrics;
+      final availableBiometrics = await _auth.getAvailableBiometrics();
       final isDeviceSupported = await _auth.isDeviceSupported();
-      return isAvailable && isDeviceSupported;
+      return availableBiometrics.isNotEmpty && isDeviceSupported;
     } catch (e) {
       debugPrint('Error checking biometric availability: $e');
       return false;
     }
   }
 
-  /// الحصول على أنواع المصادقة المتاحة
   static Future<List<BiometricType>> getAvailableBiometrics() async {
     try {
       return await _auth.getAvailableBiometrics();
@@ -28,21 +26,27 @@ class BiometricService {
     }
   }
 
-  /// المصادقة باستخدام البصمة/الوجه
   static Future<bool> authenticate({
     String reason = 'يرجى المصادقة للوصول إلى التطبيق',
     bool useErrorDialogs = true,
     bool stickyAuth = true,
   }) async {
     try {
-      final isAvailable = await BiometricService.isAvailable();
-      if (!isAvailable) {
-        debugPrint('Biometric authentication not available');
+      final available = await getAvailableBiometrics();
+      final isDeviceSupported = await _auth.isDeviceSupported();
+      if (!isDeviceSupported || available.isEmpty) {
+        debugPrint('Biometric authentication not available or not enrolled');
         return false;
       }
 
       final didAuthenticate = await _auth.authenticate(
         localizedReason: reason,
+        authMessages: const <AuthMessages>[
+          AndroidAuthMessages(
+            signInTitle: 'Masuk dengan Biometrik',
+            cancelButton: 'Batal',
+          ),
+        ],
         options: AuthenticationOptions(
           useErrorDialogs: useErrorDialogs,
           stickyAuth: stickyAuth,
@@ -52,9 +56,17 @@ class BiometricService {
 
       return didAuthenticate;
     } on PlatformException catch (e) {
-      // معالجة أخطاء البصمة بشكل احترافي أكثر
-      debugPrint('PlatformException during biometric auth: ${e.code} - ${e.message}');
-      // القيم الدقيقة للأكواد تختلف بين الأنظمة؛ هنا نرجع false فقط بدون كسر التطبيق
+      debugPrint(
+        'PlatformException during biometric auth: ${e.code} - ${e.message}',
+      );
+      // handling by code
+      if (e.code == 'NotEnrolled' || e.code == 'not_enrolled') {
+        // beri instruksi enrolment ke user
+      } else if (e.code == 'NotAvailable' || e.code == 'not_available') {
+        // not any sensor
+      } else if (e.code == 'LockedOut' || e.code == 'lockout') {
+        // failed lock biometric
+      }
       return false;
     } catch (e) {
       debugPrint('Error during biometric authentication: $e');
@@ -62,7 +74,6 @@ class BiometricService {
     }
   }
 
-  /// إلغاء المصادقة
   static Future<void> stopAuthentication() async {
     try {
       await _auth.stopAuthentication();
@@ -71,7 +82,6 @@ class BiometricService {
     }
   }
 
-  /// الحصول على اسم نوع المصادقة بالعربية
   static String getBiometricTypeName(BiometricType type) {
     switch (type) {
       case BiometricType.face:
@@ -80,20 +90,14 @@ class BiometricService {
         return 'البصمة';
       case BiometricType.iris:
         return 'القزحية';
-      case BiometricType.strong:
-        return 'مصادقة قوية';
-      case BiometricType.weak:
-        return 'مصادقة ضعيفة';
+      default:
+        return 'غير معروف';
     }
   }
 
-  /// الحصول على جميع أنواع المصادقة المتاحة كـ String
   static Future<String> getAvailableBiometricsString() async {
     final types = await getAvailableBiometrics();
-    if (types.isEmpty) {
-      return 'غير متوفر';
-    }
-    return types.map((type) => getBiometricTypeName(type)).join(', ');
+    if (types.isEmpty) return 'غير متوفر';
+    return types.map((t) => getBiometricTypeName(t)).join(', ');
   }
 }
-
