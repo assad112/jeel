@@ -2,13 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-/// خدمة إدارة الكوكيز وجلسة الدخول
+/// Service for managing cookies and login session
 class CookieService {
   static const String _sessionKey = 'user_session';
   static const String _isLoggedInKey = 'is_logged_in';
   static const String _lastLoginKey = 'last_login';
 
-  /// حفظ حالة تسجيل الدخول
+  /// Save login session state
   static Future<void> saveLoginSession({
     required String sessionId,
     required String url,
@@ -20,7 +20,7 @@ class CookieService {
     await prefs.setString(_lastLoginKey, DateTime.now().toIso8601String());
   }
 
-  /// قراءة حالة تسجيل الدخول
+  /// Read login session state
   static Future<Map<String, String?>> getLoginSession() async {
     final prefs = await SharedPreferences.getInstance();
     final sessionId = prefs.getString(_sessionKey);
@@ -34,13 +34,13 @@ class CookieService {
     };
   }
 
-  /// التحقق من حالة تسجيل الدخول
+  /// Check if user is logged in
   static Future<bool> isLoggedIn() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_isLoggedInKey) ?? false;
   }
 
-  /// حفظ حالة تسجيل الدخول بعد تحميل الصفحة
+  /// Save login state after page load
   static Future<void> saveLoginState(String url) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -53,7 +53,7 @@ class CookieService {
     }
   }
 
-  /// مسح جميع الكوكيز وجلسة الدخول
+  /// Clear all cookies and login session
   static Future<void> clearSession() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -68,7 +68,7 @@ class CookieService {
     }
   }
 
-  /// مسح الكوكيز من WebView
+  /// Clear cookies from WebView
   static Future<void> clearWebViewCookies(WebViewController controller) async {
     try {
       await controller.clearCache();
@@ -79,7 +79,7 @@ class CookieService {
     }
   }
 
-  /// الحصول على معلومات الجلسة
+  /// Get session information
   static Future<Map<String, dynamic>> getSessionInfo() async {
     final prefs = await SharedPreferences.getInstance();
     final isLoggedIn = prefs.getBool(_isLoggedInKey) ?? false;

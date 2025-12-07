@@ -44,17 +44,9 @@ class _BiometricGateScreenState extends State<BiometricGateScreen> {
           _isChecking = false;
         });
 
-        // If credentials exist and biometric is enabled, trigger authentication
-        if (_hasCredentials && _biometricEnabled && _biometricAvailable) {
-          // Small delay to show the screen first
-          await Future.delayed(const Duration(milliseconds: 500));
-          if (mounted) {
-            await _authenticateAndNavigate();
-          }
-        } else {
-          // No credentials or biometric not enabled, go directly to splash
-          _navigateToSplash();
-        }
+        // تم تعطيل البصمة التلقائية - سيتم استخدام زر البصمة في صفحة تسجيل الدخول فقط
+        // Always go directly to splash - biometric will be handled by the button in login page
+        _navigateToSplash();
       }
     } catch (e) {
       debugPrint('Error checking initial state: $e');

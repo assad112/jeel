@@ -33,16 +33,16 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _initializeAndPreload() async {
     try {
-      // الحصول على URL والعنوان
+      // Get URL and title
       _url = await SettingsService.getUrl();
       _title = await SettingsService.getTitle();
 
       if (!mounted) return;
 
-      // إنشاء WebViewController وبدء تحميل الصفحة في الخلفية
+      // Create WebViewController and start loading page in background
       _preloadedController = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(Colors.white)
+        ..setBackgroundColor(const Color(0xFFA21955))
         ..setNavigationDelegate(
           NavigationDelegate(
             onPageStarted: (String url) {
@@ -59,7 +59,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 setState(() {
                   _isPageLoaded = true;
                 });
-                // حل الـ Completer للإشارة إلى اكتمال التحميل
+                // Complete the Completer to indicate loading is complete
                 if (!_pageLoadCompleter.isCompleted) {
                   _pageLoadCompleter.complete();
                 }
@@ -67,7 +67,7 @@ class _SplashScreenState extends State<SplashScreen> {
             },
             onWebResourceError: (WebResourceError error) {
               debugPrint('Page load error: ${error.description}');
-              // حتى مع وجود خطأ، انتقل بعد timeout
+              // Even with error, continue after timeout
               if (mounted && !_pageLoadCompleter.isCompleted) {
                 _pageLoadCompleter.complete();
               }
@@ -76,7 +76,7 @@ class _SplashScreenState extends State<SplashScreen> {
               final currentUrl = Uri.parse(_url);
               final requestUrl = Uri.parse(request.url);
               
-              // إذا كان الرابط لا يبدأ بـ http/https، افتحه في متصفح خارجي
+              // If link doesn't start with http/https, open in external browser
               if (!request.url.startsWith('http')) {
                 final Uri uri = Uri.parse(request.url);
                 if (await canLaunchUrl(uri)) {
@@ -85,12 +85,12 @@ class _SplashScreenState extends State<SplashScreen> {
                 return NavigationDecision.prevent;
               }
 
-              // منع فتح YouTube في WebView
+              // Prevent opening YouTube in WebView
               if (request.url.startsWith('https://www.youtube.com/')) {
                 return NavigationDecision.prevent;
               }
 
-              // السماح بالتنقل داخل نفس النطاق (erp.jeel.om)
+              // Allow navigation within the same domain (erp.jeel.om)
               if (requestUrl.host == currentUrl.host || 
                   requestUrl.host.contains('jeel.om') ||
                   requestUrl.host.contains('erp.jeel.om')) {
@@ -102,16 +102,16 @@ class _SplashScreenState extends State<SplashScreen> {
           ),
         );
 
-      // بدء تحميل الصفحة في الخلفية
+      // Start loading page in background
       _preloadedController!.loadRequest(Uri.parse(_url));
 
-      // بدء timeout كحد أقصى للانتظار (10 ثوانٍ)
+      // Start timeout as maximum wait time (10 seconds)
       _startTimeout();
       
-      // الانتظار حتى اكتمال التحميل أو انتهاء timeout
+      // Wait until loading completes or timeout ends
       await _waitForPageLoad();
       
-      // الانتقال بعد اكتمال التحميل أو timeout
+      // Navigate after loading completes (without biometric check here)
       if (mounted && !_hasNavigated) {
         await Future.delayed(const Duration(milliseconds: 500));
         if (mounted && !_hasNavigated) {
@@ -121,10 +121,10 @@ class _SplashScreenState extends State<SplashScreen> {
       
     } catch (e) {
       debugPrint('Error initializing preload: $e');
-      // في حالة الخطأ، استخدم القيم الافتراضية
+      // In case of error, use default values
       _url = 'https://erp.jeel.om/web/login';
-      _title = 'جيل  للهندسة';
-      // الانتقال بعد خطأ
+      _title = 'Jeel Engineering';
+      // Navigate after error
       if (mounted && !_hasNavigated) {
         await Future.delayed(const Duration(seconds: 2));
         if (mounted && !_hasNavigated) {
@@ -135,7 +135,7 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   void _startTimeout() {
-    // timeout كحد أقصى 10 ثوانٍ
+    // Maximum timeout 10 seconds
     _timeoutTimer = Timer(const Duration(seconds: 10), () {
       debugPrint('Page load timeout - completing anyway');
       if (mounted && !_hasNavigated) {
@@ -148,7 +148,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _waitForPageLoad() async {
     try {
-      // انتظر اكتمال التحميل أو timeout
+      // Wait for loading completion or timeout
       await _pageLoadCompleter.future;
     } catch (e) {
       debugPrint('Error waiting for page load: $e');
@@ -184,7 +184,7 @@ class _SplashScreenState extends State<SplashScreen> {
           MaterialPageRoute(
             builder: (context) => WebViewScreen(
               url: _url.isNotEmpty ? _url : 'https://erp.jeel.om/web/login',
-              title: _title.isNotEmpty ? _title : 'جيل  للهندسة',
+              title: _title.isNotEmpty ? _title : 'Jeel Engineering',
               preloadedController: _preloadedController,
             ),
           ),
@@ -208,7 +208,7 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // أيقونة التطبيق - شعار Jeel Engineering
+            // App icon - Jeel Engineering logo
             Container(
               width: 150,
               height: 150,
@@ -217,7 +217,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.grey.withOpacity(0.15),
+                    color: Colors.grey.withOpacity(0.3),
                     spreadRadius: 3,
                     blurRadius: 10,
                     offset: const Offset(0, 5),
@@ -232,16 +232,16 @@ class _SplashScreenState extends State<SplashScreen> {
                   height: 110,
                   fit: BoxFit.contain,
                   errorBuilder: (context, error, stackTrace) {
-                    // في حالة عدم وجود الصورة، استخدم الأيقونة الافتراضية
+                    // If image is not found, use default icon
                     return Container(
                       decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
+                        color: const Color(0xFFA21955).withOpacity(0.1),
                         borderRadius: BorderRadius.circular(15),
                       ),
-                      child: Icon(
+                      child: const Icon(
                         Icons.business,
                         size: 70,
-                        color: Colors.blue.shade700,
+                        color: Color(0xFFA21955),
                       ),
                     );
                   },
@@ -249,20 +249,20 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ),
             const SizedBox(height: 30),
-            // اسم التطبيق
+            // App name
             const Text(
               'Jeel ERP',
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,
-                color: Colors.black87,
+                color: Color(0xFFA21955),
               ),
             ),
             const SizedBox(height: 20),
-            // مؤشر التحميل الاحترافي - discreteCircular
+            // Professional loading indicator - discreteCircular
             LoadingAnimationWidget.discreteCircle(
-              color: const Color(0xFFA21955), // لون #A21955
-              secondRingColor: const Color(0xFF0099A3), // لون #0099A3
+              color: const Color(0xFFA21955),
+              secondRingColor: const Color(0xFF0099A3),
               thirdRingColor: const Color(0xFFA21955),
               size: 50,
             ),

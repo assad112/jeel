@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// خدمة حفظ المعلومات بشكل آمن (معلومات الدخول)
+/// Service for securely storing information (login credentials)
 class SecureStorageService {
   static const FlutterSecureStorage _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(
@@ -12,28 +12,45 @@ class SecureStorageService {
     ),
   );
 
-  // مفاتيح التخزين
+  // Storage keys
   static const String _usernameKey = 'saved_username';
   static const String _passwordKey = 'saved_password';
   static const String _biometricEnabledKey = 'biometric_enabled';
   static const String _autoLoginEnabledKey = 'auto_login_enabled';
 
-  /// حفظ معلومات الدخول
+  /// Save login credentials with verification
   static Future<void> saveCredentials({
     required String username,
     required String password,
   }) async {
     try {
-      await _storage.write(key: _usernameKey, value: username);
+      // Validate input
+      if (username.isEmpty || password.isEmpty) {
+        throw Exception('Username and password cannot be empty');
+      }
+
+      // Save username
+      await _storage.write(key: _usernameKey, value: username.trim());
+      
+      // Save password
       await _storage.write(key: _passwordKey, value: password);
-      debugPrint('Credentials saved securely');
+
+      // Verify that data was saved correctly
+      final savedUsername = await _storage.read(key: _usernameKey);
+      final savedPassword = await _storage.read(key: _passwordKey);
+
+      if (savedUsername != username.trim() || savedPassword != password) {
+        throw Exception('Verification failed: Saved data does not match');
+      }
+
+      debugPrint('✅ Credentials saved and verified successfully');
     } catch (e) {
-      debugPrint('Error saving credentials: $e');
+      debugPrint('❌ Error saving credentials: $e');
       rethrow;
     }
   }
 
-  /// قراءة معلومات الدخول
+  /// Read login credentials
   static Future<Map<String, String?>> getCredentials() async {
     try {
       final username = await _storage.read(key: _usernameKey);
@@ -48,7 +65,7 @@ class SecureStorageService {
     }
   }
 
-  /// التحقق من وجود معلومات دخول محفوظة
+  /// Check if credentials are saved
   static Future<bool> hasSavedCredentials() async {
     try {
       final username = await _storage.read(key: _usernameKey);
@@ -60,7 +77,7 @@ class SecureStorageService {
     }
   }
 
-  /// حذف معلومات الدخول
+  /// Delete login credentials
   static Future<void> deleteCredentials() async {
     try {
       await _storage.delete(key: _usernameKey);
@@ -73,16 +90,26 @@ class SecureStorageService {
     }
   }
 
-  /// تفعيل/تعطيل المصادقة الحيوية
+  /// Enable/disable biometric authentication with verification
   static Future<void> setBiometricEnabled(bool enabled) async {
     try {
+      // Save the setting
       await _storage.write(key: _biometricEnabledKey, value: enabled.toString());
+
+      // Verify that it was saved correctly
+      final savedValue = await _storage.read(key: _biometricEnabledKey);
+      if (savedValue != enabled.toString()) {
+        throw Exception('Failed to verify biometric setting');
+      }
+
+      debugPrint('✅ Biometric enabled status set to: $enabled');
     } catch (e) {
-      debugPrint('Error setting biometric enabled: $e');
+      debugPrint('❌ Error setting biometric enabled: $e');
+      rethrow;
     }
   }
 
-  /// التحقق من تفعيل المصادقة الحيوية
+  /// Check if biometric authentication is enabled
   static Future<bool> isBiometricEnabled() async {
     try {
       final value = await _storage.read(key: _biometricEnabledKey);
@@ -93,7 +120,7 @@ class SecureStorageService {
     }
   }
 
-  /// تفعيل/تعطيل تسجيل الدخول التلقائي
+  /// Enable/disable auto login
   static Future<void> setAutoLoginEnabled(bool enabled) async {
     try {
       await _storage.write(key: _autoLoginEnabledKey, value: enabled.toString());
@@ -102,7 +129,7 @@ class SecureStorageService {
     }
   }
 
-  /// التحقق من تفعيل تسجيل الدخول التلقائي
+  /// Check if auto login is enabled
   static Future<bool> isAutoLoginEnabled() async {
     try {
       final value = await _storage.read(key: _autoLoginEnabledKey);
@@ -113,7 +140,7 @@ class SecureStorageService {
     }
   }
 
-  /// مسح جميع البيانات المحفوظة
+  /// Clear all saved data
   static Future<void> clearAll() async {
     try {
       await _storage.deleteAll();
