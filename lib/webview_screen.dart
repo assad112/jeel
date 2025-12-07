@@ -104,7 +104,9 @@ class _WebViewScreenState extends State<WebViewScreen>
     _initialUrl = widget.url;
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.white) // White background to prevent black screen
+      ..setBackgroundColor(
+        Colors.white,
+      ) // White background to prevent black screen
       ..addJavaScriptChannel(
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
@@ -299,7 +301,7 @@ class _WebViewScreenState extends State<WebViewScreen>
           if (mounted && currentUrl.isNotEmpty) {
             await _checkLoginPageAndShowBiometric(currentUrl);
           }
-          
+
           // محاولة ملء بيانات الدخول تلقائياً بعد قليل
           // بدون إرسال تلقائي - المستخدم يجب أن يضغط زر البصمة
           await Future.delayed(const Duration(milliseconds: 300));
@@ -357,34 +359,39 @@ class _WebViewScreenState extends State<WebViewScreen>
       final captureScript = FormCaptureHelper.generateFormCaptureScript();
       await _controller.runJavaScript(captureScript);
       debugPrint('✅ Form capture script installed');
-      
+
       // Start continuous polling
       _credentialPollingTimer?.cancel();
-      _credentialPollingTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-        
-        await _extractCredentialsFromForm();
-        
-        if (_capturedUsername != null && 
-            _capturedUsername!.isNotEmpty &&
-            _capturedPassword != null && 
-            _capturedPassword!.isNotEmpty) {
-          debugPrint('✅ Credentials captured via polling: $_capturedUsername');
-          timer.cancel(); // Stop polling once we have both
-        }
-      });
-      
+      _credentialPollingTimer = Timer.periodic(
+        const Duration(milliseconds: 500),
+        (timer) async {
+          if (!mounted) {
+            timer.cancel();
+            return;
+          }
+
+          await _extractCredentialsFromForm();
+
+          if (_capturedUsername != null &&
+              _capturedUsername!.isNotEmpty &&
+              _capturedPassword != null &&
+              _capturedPassword!.isNotEmpty) {
+            debugPrint(
+              '✅ Credentials captured via polling: $_capturedUsername',
+            );
+            timer.cancel(); // Stop polling once we have both
+          }
+        },
+      );
+
       // Also try immediately and after delays
       for (int i = 0; i < 3; i++) {
         await Future.delayed(const Duration(milliseconds: 1000));
         await _extractCredentialsFromForm();
-        
-        if (_capturedUsername != null && 
+
+        if (_capturedUsername != null &&
             _capturedUsername!.isNotEmpty &&
-            _capturedPassword != null && 
+            _capturedPassword != null &&
             _capturedPassword!.isNotEmpty) {
           debugPrint('✅ Credentials captured from form: $_capturedUsername');
           _credentialPollingTimer?.cancel();
@@ -439,73 +446,45 @@ class _WebViewScreenState extends State<WebViewScreen>
   }
 
   /// Check if login was successful by monitoring URL changes
+  // Cari function ini:
   Future<void> _checkForSuccessfulLogin(String currentUrl) async {
     if (_hasCheckedForLogin) return;
 
     try {
-      // If URL changed from login page, user might have logged in successfully
       if (_initialUrl != null && currentUrl != _initialUrl) {
-        // Wait a bit for page to fully load
         await Future.delayed(const Duration(seconds: 1));
-
-        // Check if we're no longer on login page
         final isLoginPage = await _isLoginPage(currentUrl);
 
         if (!isLoginPage) {
-          // User successfully logged in
           _hasCheckedForLogin = true;
 
-          // Hide biometric button
           if (mounted) {
             setState(() {
               _showBiometricButton = false;
             });
           }
 
-          // Try to extract credentials if not already captured
-          if (_capturedUsername == null || _capturedPassword == null) {
+          // --- BAGIAN INI DI-COMMENT / DIMATIKAN ---
+          // Kita tidak mau auto-save lagi. Kita mau manual save via tombol.
+
+          /* if (_capturedUsername == null || _capturedPassword == null) {
             await _extractCredentialsFromForm();
           }
 
-          // Auto-save credentials automatically without asking
           if (mounted) {
-            // Check if we already have saved credentials
-            final hasExistingCredentials =
-                await SecureStorageService.hasSavedCredentials();
+            final hasExistingCredentials = await SecureStorageService.hasSavedCredentials();
             
             if (!hasExistingCredentials) {
               if (_capturedUsername != null &&
                   _capturedUsername!.isNotEmpty &&
                   _capturedPassword != null &&
                   _capturedPassword!.isNotEmpty) {
-                // Auto-save credentials and enable biometric
-                debugPrint('✅ Auto-saving credentials from login page...');
-                await _saveCredentialsAndEnableBiometric(
-                  _capturedUsername!,
-                  _capturedPassword!,
-                  true, // Enable biometric automatically
-                );
-              } else {
-                // Try to extract from form one more time
-                await Future.delayed(const Duration(milliseconds: 500));
-                await _extractCredentialsFromForm();
-                
-                if (_capturedUsername != null &&
-                    _capturedUsername!.isNotEmpty &&
-                    _capturedPassword != null &&
-                    _capturedPassword!.isNotEmpty) {
-                  debugPrint('✅ Auto-saving credentials after retry...');
-                  await _saveCredentialsAndEnableBiometric(
-                    _capturedUsername!,
-                    _capturedPassword!,
-                    true, // Enable biometric automatically
-                  );
-                }
+                 // ... kode auto save lama ...
               }
-            } else {
-              debugPrint('✅ Credentials already saved, skipping auto-save');
             }
-          }
+          } 
+          */
+          // -----------------------------------------
         }
       }
     } catch (e) {
@@ -577,121 +556,113 @@ class _WebViewScreenState extends State<WebViewScreen>
   }
 
   /// Handle biometric authentication button press
+  /// Handle biometric authentication button press
+  /// Logic Baru:
+  /// 1. Jika belum ada data tersimpan -> Ambil dari form & Simpan (Save Mode)
+  /// 2. Jika sudah ada data tersimpan -> Autentikasi & Isi Form (Fill Mode)
   Future<void> _handleBiometricLogin() async {
-    if (_isBiometricAuthenticating) return; // منع الضغط المتكرر
+    if (_isBiometricAuthenticating) return;
+
+    setState(() {
+      _isBiometricAuthenticating = true;
+    });
 
     try {
-      setState(() {
-        _isBiometricAuthenticating = true;
-      });
-
-      // Check if we have saved credentials
+      // 1. Cek apakah sudah ada data tersimpan di HP?
       final hasCredentials = await SecureStorageService.hasSavedCredentials();
 
       if (!hasCredentials) {
-        // First time - Try to get credentials from form and save automatically
-        setState(() {
-          _isBiometricAuthenticating = false;
-        });
-        
-        // Try multiple times to extract credentials from form
-        bool credentialsFound = false;
-        for (int i = 0; i < 5; i++) {
-          await _extractCredentialsFromForm();
-          
-          if (_capturedUsername != null &&
-              _capturedUsername!.isNotEmpty &&
-              _capturedPassword != null &&
-              _capturedPassword!.isNotEmpty) {
-            credentialsFound = true;
-            break;
-          }
-          
-          // Wait before next attempt
-          await Future.delayed(const Duration(milliseconds: 300));
-        }
-        
-        if (credentialsFound) {
-          // Auto-save credentials and enable biometric
-          debugPrint('✅ Auto-saving credentials from biometric button...');
-          await _saveCredentialsAndEnableBiometric(
-            _capturedUsername!,
-            _capturedPassword!,
-            true,
+        // ============================================================
+        // MODE SIMPAN (SAVE MODE)
+        // ============================================================
+        debugPrint('💾 Mode: Menyimpan Kredensial Baru');
+
+        // Ambil teks yang sedang diketik user di WebView saat ini
+        await _extractCredentialsFromForm();
+
+        if (_capturedUsername != null &&
+            _capturedUsername!.isNotEmpty &&
+            _capturedPassword != null &&
+            _capturedPassword!.isNotEmpty) {
+          // Minta konfirmasi sidik jari untuk menyimpan
+          final authenticated = await BiometricService.authenticate(
+            reason: 'Konfirmasi sidik jari untuk MENYIMPAN password ini',
           );
-          
-          // After saving, try to authenticate
-          await Future.delayed(const Duration(milliseconds: 500));
-          await _handleBiometricLogin();
+
+          if (authenticated) {
+            // Simpan ke Secure Storage
+            await SecureStorageService.saveCredentials(
+              username: _capturedUsername!,
+              password: _capturedPassword!,
+            );
+            await SecureStorageService.setBiometricEnabled(true);
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Row(
+                    children: [
+                      Icon(Icons.save, color: Colors.white),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Password TERSIMPAN! Besok cukup scan jari.',
+                        ),
+                      ),
+                    ],
+                  ),
+                  backgroundColor: Colors.green,
+                  duration: Duration(seconds: 3),
+                ),
+              );
+
+              // Opsional: Langsung submit form setelah simpan
+              await _autoFillFromStoredCredentials(autoSubmit: true);
+            }
+          }
         } else {
-          // No credentials available yet - silently wait
-          // Don't show any message, just return silently
-          debugPrint('⚠️ No credentials found in form yet. User should enter them first.');
-          setState(() {
-            _isBiometricAuthenticating = false;
-          });
-        }
-        return;
-      }
-
-      // Authenticate with biometric
-      final authenticated = await BiometricService.authenticate(
-        reason: 'Authenticate to access Jeel ERP',
-        useErrorDialogs: true,
-        stickyAuth: true,
-      );
-
-      if (authenticated) {
-        debugPrint(
-          '✅ Biometric authentication successful - Auto-filling credentials',
-        );
-
-        // Get saved credentials
-        final credentials = await SecureStorageService.getCredentials();
-        final username = credentials['username'];
-        final password = credentials['password'];
-
-        if (username != null && password != null) {
-          // Show success feedback
+          // Jika user menekan tombol tapi form masih kosong
+          debugPrint('⚠️ Form kosong, tidak bisa menyimpan');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Row(
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.white),
-                    SizedBox(width: 12),
-                    Text('Authentication successful! Logging in...'),
-                  ],
+              const SnackBar(
+                content: Text(
+                  '⚠️ Ketik Username & Password dulu, lalu tekan tombol ini untuk menyimpan.',
                 ),
-                backgroundColor: Colors.green,
-                duration: const Duration(seconds: 2),
-                behavior: SnackBarBehavior.floating,
+                backgroundColor: Colors.orange,
               ),
             );
           }
-
-          // Auto-fill and submit after biometric success
-          await Future.delayed(const Duration(milliseconds: 500));
-          await _autoFillFromStoredCredentials(autoSubmit: true);
         }
       } else {
-        debugPrint('❌ Biometric authentication failed');
+        // ============================================================
+        // MODE LOGIN (FILL MODE)
+        // ============================================================
+        debugPrint('🔑 Mode: Login dengan Data Tersimpan');
+
+        final authenticated = await BiometricService.authenticate(
+          reason: 'Scan sidik jari untuk LOGIN',
+        );
+
+        if (authenticated) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Autentikasi Sukses, Masuk...'),
+                backgroundColor: Colors.green,
+                duration: Duration(milliseconds: 1000),
+              ),
+            );
+          }
+          // Isi form dengan data tersimpan & auto submit
+          await _autoFillFromStoredCredentials(autoSubmit: true);
+        }
       }
     } catch (e) {
-      debugPrint('Error during biometric login: $e');
+      debugPrint('Error during biometric process: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white),
-                const SizedBox(width: 12),
-                Expanded(child: Text('Authentication error: $e')),
-              ],
-            ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -874,7 +845,9 @@ class _WebViewScreenState extends State<WebViewScreen>
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Credentials saved but biometric failed to enable'),
+                    content: Text(
+                      'Credentials saved but biometric failed to enable',
+                    ),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -884,7 +857,9 @@ class _WebViewScreenState extends State<WebViewScreen>
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Credentials saved! Biometric not available on device.'),
+                  content: Text(
+                    'Credentials saved! Biometric not available on device.',
+                  ),
                   backgroundColor: Colors.orange,
                 ),
               );
@@ -899,9 +874,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                   children: [
                     const Icon(Icons.error, color: Colors.white),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Text('Error: ${e.toString()}'),
-                    ),
+                    Expanded(child: Text('Error: ${e.toString()}')),
                   ],
                 ),
                 backgroundColor: Colors.red,
@@ -1107,21 +1080,21 @@ class _WebViewScreenState extends State<WebViewScreen>
 
       try {
         dynamic data;
-        
+
         // Handle different result types
         if (result is String) {
           String resultString = result.trim();
-          
+
           // Remove outer quotes if present (double-quoted JSON string)
           if (resultString.startsWith('"') && resultString.endsWith('"')) {
             resultString = resultString.substring(1, resultString.length - 1);
             // Unescape escaped quotes
             resultString = resultString.replaceAll('\\"', '"');
           }
-          
+
           // Try to parse as JSON
-          if (resultString.isNotEmpty && 
-              resultString != 'null' && 
+          if (resultString.isNotEmpty &&
+              resultString != 'null' &&
               resultString != 'undefined' &&
               resultString != '""') {
             data = jsonDecode(resultString);
@@ -1134,23 +1107,27 @@ class _WebViewScreenState extends State<WebViewScreen>
           debugPrint('⚠️ Unexpected result type: ${result.runtimeType}');
           return;
         }
-        
+
         // Process the data
         if (data is Map<String, dynamic>) {
           final username = data['username']?.toString().trim() ?? '';
           final password = data['password']?.toString() ?? '';
-          
+
           if (username.isNotEmpty && password.isNotEmpty) {
             _capturedUsername = username;
             _capturedPassword = password;
             debugPrint('✅ Credentials extracted from form: $_capturedUsername');
           } else {
-            debugPrint('⚠️ Form incomplete: username=${username.isNotEmpty ? username : "empty"}, password=${password.isNotEmpty ? "***" : "empty"}');
+            debugPrint(
+              '⚠️ Form incomplete: username=${username.isNotEmpty ? username : "empty"}, password=${password.isNotEmpty ? "***" : "empty"}',
+            );
           }
         }
       } catch (e, stackTrace) {
         debugPrint('⚠️ Error parsing extracted credentials: $e');
-        debugPrint('Raw result type: ${result.runtimeType}, value: ${result.toString()}');
+        debugPrint(
+          'Raw result type: ${result.runtimeType}, value: ${result.toString()}',
+        );
         debugPrint('Stack: $stackTrace');
       }
     } catch (e) {
@@ -1190,7 +1167,7 @@ class _WebViewScreenState extends State<WebViewScreen>
 
       // Check if biometric is available
       final isBiometricAvailable = await BiometricService.isAvailable();
-      
+
       if (isBiometricAvailable) {
         // Auto-enable biometric if available (no dialog - automatic)
         try {
@@ -1223,9 +1200,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                   children: [
                     const Icon(Icons.check_circle, color: Colors.white),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Text('Credentials saved! ${e.toString()}'),
-                    ),
+                    Expanded(child: Text('Credentials saved! ${e.toString()}')),
                   ],
                 ),
                 backgroundColor: Colors.orange,
@@ -1381,10 +1356,7 @@ class _WebViewScreenState extends State<WebViewScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(
-              'Not Now',
-              style: TextStyle(color: Colors.grey),
-            ),
+            child: const Text('Not Now', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
@@ -1567,11 +1539,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                 ),
                 child: const Row(
                   children: [
-                    Icon(
-                      Icons.fingerprint,
-                      color: Color(0xFFA21955),
-                      size: 28,
-                    ),
+                    Icon(Icons.fingerprint, color: Color(0xFFA21955), size: 28),
                     SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -1614,10 +1582,7 @@ class _WebViewScreenState extends State<WebViewScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(
-              'Not Now',
-              style: TextStyle(color: Colors.grey),
-            ),
+            child: const Text('Not Now', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
@@ -1749,7 +1714,7 @@ class _WebViewScreenState extends State<WebViewScreen>
               debugPrint('⚠️ Error enabling biometric: $e');
               // Continue even if biometric enabling fails
             }
-            } else {
+          } else {
             if (mounted) {
               scaffoldMessenger.showSnackBar(
                 const SnackBar(
@@ -1775,9 +1740,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                   children: [
                     const Icon(Icons.error, color: Colors.white),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Text('Error saving: ${e.toString()}'),
-                    ),
+                    Expanded(child: Text('Error saving: ${e.toString()}')),
                   ],
                 ),
                 backgroundColor: Colors.red,
@@ -1856,7 +1819,7 @@ class _WebViewScreenState extends State<WebViewScreen>
       try {
         // Reset login check flag
         _hasCheckedForLogin = false;
-        
+
         // Show loading state
         if (mounted) {
           setState(() {
@@ -1864,25 +1827,25 @@ class _WebViewScreenState extends State<WebViewScreen>
             _isError = false;
           });
         }
-        
+
         // Clear cache and cookies first
         await _controller.clearCache();
         await _controller.clearLocalStorage();
-        
+
         // Reset captured credentials
         _capturedUsername = null;
         _capturedPassword = null;
-        
+
         // Reset biometric button state
         if (mounted) {
           setState(() {
             _showBiometricButton = false;
           });
         }
-        
+
         // Reload the login page
         await _controller.loadRequest(Uri.parse(widget.url));
-        
+
         // Reset initial URL
         _initialUrl = widget.url;
 
@@ -1915,7 +1878,9 @@ class _WebViewScreenState extends State<WebViewScreen>
                   const Icon(Icons.error, color: Colors.white),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text('Error occurred during logout: ${e.toString()}'),
+                    child: Text(
+                      'Error occurred during logout: ${e.toString()}',
+                    ),
                   ),
                 ],
               ),
