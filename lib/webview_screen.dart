@@ -8,6 +8,9 @@ import 'services/biometric_service.dart';
 import 'widgets/professional_loader.dart';
 import 'utils/javascript_helpers.dart';
 import 'utils/form_capture_helper.dart';
+import 'utils/app_localizations.dart';
+import 'splash_screen.dart';
+import 'login_test.dart';
 
 class WebViewScreen extends StatefulWidget {
   final String url;
@@ -32,17 +35,80 @@ class _WebViewScreenState extends State<WebViewScreen>
   double _progress = 0; // Kept for potential future use with progress indicator
   bool _isError = false;
   bool _isLoading = true;
+  // Never show the website's login page UI (no flash). We keep the WebView
+  // hidden until we confirm we're not on a web login page.
+  bool _isWebContentVisible = false;
+  bool _redirectedAwayFromWebLogin = false;
+  int _revealGeneration = 0;
   late AnimationController _loadingAnimationController;
   late AnimationController _biometricAnimationController;
   late Animation<double> _biometricScaleAnimation;
   late Animation<double> _biometricPulseAnimation;
   String? _initialUrl;
   bool _hasCheckedForLogin = false;
+  bool _wasLoggedInThisSession = false;
   String? _capturedUsername;
   String? _capturedPassword;
   bool _showBiometricButton = false;
   bool _isBiometricAvailable = false;
   bool _isBiometricAuthenticating = false;
+
+  Future<void> _clearSavedAuthDataForLogout({required bool showMessage}) async {
+    // Clear everything related to login + biometric so a new account can be used.
+    await SecureStorageService.deleteCredentials();
+    debugPrint('✅ Logout detected: cleared saved credentials + biometric');
+
+    _capturedUsername = null;
+    _capturedPassword = null;
+    _hasCheckedForLogin = false;
+    _wasLoggedInThisSession = false;
+
+    if (mounted) {
+      setState(() {
+        _showBiometricButton = false;
+      });
+    }
+
+    if (showMessage && mounted) {
+      final l10n = AppLocalizations.of(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            l10n.isArabic
+                ? 'تم تسجيل الخروج ومسح بيانات الدخول والبصمة.'
+                : 'Logged out. Saved credentials and biometric were cleared.',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<bool> _maybeHandleLogoutReturnToLogin(String url) async {
+    // If the user was logged in and we return to a login page, treat it as logout
+    // and clear saved credentials to avoid auto-filling the old account.
+    if (!_wasLoggedInThisSession) return false;
+
+    // IMPORTANT: only treat this as a logout if the URL clearly indicates
+    // a web-login page. DOM-based checks can be transient/stale during navigation
+    // and could incorrectly clear credentials while on authenticated pages.
+    final isLoginPageNow = _looksLikeWebLoginUrl(url);
+
+    if (isLoginPageNow) {
+      final hasSavedCredentials = await SecureStorageService.hasSavedCredentials();
+      if (hasSavedCredentials) {
+        await _clearSavedAuthDataForLogout(showMessage: true);
+      } else {
+        // Still reset flags to prevent any auto-fill loops.
+        _hasCheckedForLogin = false;
+        _wasLoggedInThisSession = false;
+      }
+      return true;
+    }
+
+    return false;
+  }
 
   @override
   void initState() {
@@ -52,7 +118,7 @@ class _WebViewScreenState extends State<WebViewScreen>
       duration: const Duration(seconds: 2),
     )..repeat();
 
-    // تهيئة أنيميشن البصمة
+    // Initialize biometric animation
     _biometricAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -72,21 +138,111 @@ class _WebViewScreenState extends State<WebViewScreen>
       ),
     );
 
-    // تهيئة التحقق من البصمة
+    // Initialize biometric check
     _initBiometric();
 
-    // استخدام الـ controller المحمل مسبقاً إذا كان متاحاً، وإلا إنشاء واحد جديد
+    // Use the preloaded controller if available, otherwise create a new one
     if (widget.preloadedController != null) {
       _controller = widget.preloadedController!;
-      // افترض أن الصفحة محملة بالفعل عند استخدام preloaded controller
-      _isLoading = false;
-      // إضافة navigation delegate للتحديثات إذا لم يكن موجوداً
+      // Keep content hidden until we verify the current URL.
+      _isLoading = true;
+      _isWebContentVisible = false;
+      // Attach navigation delegate for updates if not already present
       _attachNavigationDelegate();
-      // إذا كان محمل مسبقاً، تحقق من حالة التحميل بسرعة
+      // If preloaded, check loading status quickly
       _checkPreloadedPageStatus();
     } else {
       _initializeController();
     }
+  }
+
+  bool _looksLikeWebLoginUrl(String url) {
+    if (url.isEmpty) return true;
+    final lower = url.toLowerCase();
+    final uri = Uri.tryParse(url);
+    final path = uri?.path.toLowerCase() ?? '';
+
+    // Be conservative: if it contains login anywhere, treat as login.
+    // This prevents the "flash" of the ERP login page.
+    return lower.contains('/web/login') || path.contains('login') || lower.contains('login');
+  }
+
+  Future<void> _ensureWebContentRevealedIfSafe({String? urlHint}) async {
+    if (!mounted) return;
+    if (_isWebContentVisible) return;
+
+    final generation = ++_revealGeneration;
+
+    // Prefer the controller URL (source of truth) but allow a hint.
+    final currentUrl = (await _controller.currentUrl()) ?? urlHint ?? '';
+
+    // Never reveal the web login page.
+    if (_looksLikeWebLoginUrl(currentUrl)) {
+      await _redirectAwayFromWebLoginIfNeeded(currentUrl);
+      return;
+    }
+
+    // Give the platform view a moment to settle; first paint can still show
+    // the last-rendered page contents.
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted || generation != _revealGeneration) return;
+
+    final urlAfterDelay = (await _controller.currentUrl()) ?? currentUrl;
+    if (_looksLikeWebLoginUrl(urlAfterDelay)) {
+      await _redirectAwayFromWebLoginIfNeeded(urlAfterDelay);
+      return;
+    }
+
+    // Debounced DOM check: sometimes the old login DOM is briefly visible even
+    // when the URL already changed (e.g., /my). We only reveal once we see a
+    // stable "not login" result.
+    bool looksLikeLoginForm = await _isLoginPage(urlAfterDelay);
+    if (!mounted || generation != _revealGeneration) return;
+
+    if (looksLikeLoginForm) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted || generation != _revealGeneration) return;
+      final urlSecond = (await _controller.currentUrl()) ?? urlAfterDelay;
+      if (_looksLikeWebLoginUrl(urlSecond)) {
+        await _redirectAwayFromWebLoginIfNeeded(urlSecond);
+        return;
+      }
+      looksLikeLoginForm = await _isLoginPage(urlSecond);
+      if (!mounted || generation != _revealGeneration) return;
+    }
+
+    if (!looksLikeLoginForm && mounted) {
+      setState(() {
+        _isWebContentVisible = true;
+      });
+    }
+  }
+
+  Future<void> _redirectAwayFromWebLoginIfNeeded(String url) async {
+    if (_redirectedAwayFromWebLogin) return;
+    if (!_looksLikeWebLoginUrl(url)) return;
+    if (!mounted) return;
+
+    _redirectedAwayFromWebLogin = true;
+
+    // Hide web content immediately so the website login never appears.
+    setState(() {
+      _isWebContentVisible = false;
+      _isLoading = true;
+    });
+
+    final hasSavedCredentials = await SecureStorageService.hasSavedCredentials();
+
+    if (!mounted) return;
+
+    // If we have saved credentials, go back through Splash to re-auth in background.
+    // Otherwise, show the native app login screen.
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => hasSavedCredentials ? const SplashScreen() : const LoginPage(),
+      ),
+      (route) => false,
+    );
   }
 
   /// Initialize biometric availability check
@@ -102,6 +258,7 @@ class _WebViewScreenState extends State<WebViewScreen>
 
   void _initializeController() {
     _initialUrl = widget.url;
+    _isWebContentVisible = false;
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(
@@ -125,6 +282,13 @@ class _WebViewScreenState extends State<WebViewScreen>
               _isLoading = true;
               _isError = false;
             });
+
+            // If navigation starts to web-login, hide immediately.
+            if (_looksLikeWebLoginUrl(url) && mounted) {
+              setState(() {
+                _isWebContentVisible = false;
+              });
+            }
           },
           onPageFinished: (String url) async {
             setState(() {
@@ -132,18 +296,28 @@ class _WebViewScreenState extends State<WebViewScreen>
               _progress = 0;
             });
 
+            // Never show the web login page UI.
+            await _redirectAwayFromWebLoginIfNeeded(url);
+            if (!mounted) return;
+
+            await _ensureWebContentRevealedIfSafe(urlHint: url);
+
             // Set up form capture to monitor form inputs
             await _setupFormCapture();
 
             // Check if we're on login page and show biometric button
             await _checkLoginPageAndShowBiometric(url);
 
+            // If user logged out inside the web app, clear saved data BEFORE any auto-fill.
+            final handledLogout = await _maybeHandleLogoutReturnToLogin(url);
+            if (handledLogout) return;
+
             // Check if login was successful (URL changed from login page)
             await _checkForSuccessfulLogin(url);
 
-            // Auto-fill credentials if saved in login page (without auto-submit)
-            // User must press biometric button to login
-            await _autoFillFromStoredCredentials(autoSubmit: false);
+            // Auto-fill credentials if saved in login page (with auto-submit)
+            // Credentials will be filled and login button clicked automatically
+            await _autoFillFromStoredCredentials(autoSubmit: true);
           },
           onWebResourceError: (WebResourceError error) {
             debugPrint(
@@ -169,11 +343,11 @@ class _WebViewScreenState extends State<WebViewScreen>
               });
             }
 
-            // السماح بالتنقل داخل نفس الموقع فقط
+            // Allow navigation within the same site only
             final currentUrl = Uri.parse(widget.url);
             final requestUrl = Uri.parse(request.url);
 
-            // إذا كان الرابط لا يبدأ بـ http/https، افتحه في متصفح خارجي
+            // If link doesn't start with http/https, open in external browser
             if (!request.url.startsWith('http')) {
               final Uri uri = Uri.parse(request.url);
               if (await canLaunchUrl(uri)) {
@@ -182,19 +356,19 @@ class _WebViewScreenState extends State<WebViewScreen>
               return NavigationDecision.prevent;
             }
 
-            // منع فتح YouTube في WebView
+            // Prevent opening YouTube in WebView
             if (request.url.startsWith('https://www.youtube.com/')) {
               return NavigationDecision.prevent;
             }
 
-            // السماح بالتنقل داخل نفس النطاق (erp.jeel.om)
+            // Allow navigation within the same domain (erp.jeel.om)
             if (requestUrl.host == currentUrl.host ||
                 requestUrl.host.contains('jeel.om') ||
                 requestUrl.host.contains('erp.jeel.om')) {
               return NavigationDecision.navigate;
             }
 
-            // السماح بالتنقل داخل نفس الموقع
+            // Allow navigation within the same site
             return NavigationDecision.navigate;
           },
         ),
@@ -202,7 +376,7 @@ class _WebViewScreenState extends State<WebViewScreen>
       ..loadRequest(Uri.parse(widget.url));
   }
 
-  // إرفاق navigation delegate للـ controller المحمل مسبقاً
+  // Attach navigation delegate for preloaded controller
   void _attachNavigationDelegate() {
     _controller.setNavigationDelegate(
       NavigationDelegate(
@@ -219,6 +393,11 @@ class _WebViewScreenState extends State<WebViewScreen>
               _isLoading = true;
               _isError = false;
             });
+
+            // Hide immediately when web-login is about to be shown.
+            if (_looksLikeWebLoginUrl(url)) {
+              _isWebContentVisible = false;
+            }
           }
         },
         onPageFinished: (String url) async {
@@ -228,11 +407,20 @@ class _WebViewScreenState extends State<WebViewScreen>
               _progress = 0;
             });
 
+            await _redirectAwayFromWebLoginIfNeeded(url);
+            if (!mounted) return;
+
+            await _ensureWebContentRevealedIfSafe(urlHint: url);
+
             // Check if we're on login page and show biometric button
             await _checkLoginPageAndShowBiometric(url);
 
-            // محاولة ملء بيانات الدخول تلقائياً (إن وُجدت) في صفحة تسجيل الدخول
-            // بدون إرسال تلقائي - المستخدم يجب أن يضغط زر البصمة
+            // If user logged out inside the web app, clear saved data BEFORE any auto-fill.
+            final handledLogout = await _maybeHandleLogoutReturnToLogin(url);
+            if (handledLogout) return;
+
+            // Try to auto-fill credentials (if saved) on login page
+            // Without auto-submit - user must press biometric button
             await _autoFillFromStoredCredentials(autoSubmit: false);
           }
         },
@@ -249,11 +437,11 @@ class _WebViewScreenState extends State<WebViewScreen>
           }
         },
         onNavigationRequest: (NavigationRequest request) async {
-          // السماح بالتنقل داخل نفس الموقع فقط
+          // Allow navigation within the same site only
           final currentUrl = Uri.parse(widget.url);
           final requestUrl = Uri.parse(request.url);
 
-          // إذا كان الرابط لا يبدأ بـ http/https، افتحه في متصفح خارجي
+          // If link doesn't start with http/https, open in external browser
           if (!request.url.startsWith('http')) {
             final Uri uri = Uri.parse(request.url);
             if (await canLaunchUrl(uri)) {
@@ -262,34 +450,42 @@ class _WebViewScreenState extends State<WebViewScreen>
             return NavigationDecision.prevent;
           }
 
-          // منع فتح YouTube في WebView
+          // Prevent opening YouTube in WebView
           if (request.url.startsWith('https://www.youtube.com/')) {
             return NavigationDecision.prevent;
           }
 
-          // السماح بالتنقل داخل نفس النطاق (erp.jeel.om)
+          // Allow navigation within the same domain (erp.jeel.om)
           if (requestUrl.host == currentUrl.host ||
               requestUrl.host.contains('jeel.om') ||
               requestUrl.host.contains('erp.jeel.om')) {
             return NavigationDecision.navigate;
           }
 
-          // السماح بالتنقل داخل نفس الموقع
+          // Allow navigation within the same site
           return NavigationDecision.navigate;
         },
       ),
     );
   }
 
-  // التحقق من حالة الصفحة المحملة مسبقاً
+  // Check preloaded page status
   Future<void> _checkPreloadedPageStatus() async {
     if (!mounted) return;
 
-    // التحقق فوراً من أن الصفحة تم تحميلها بالفعل
+    // Check immediately if page is already loaded
     try {
       final currentUrl = await _controller.currentUrl();
       if (currentUrl != null && currentUrl.isNotEmpty) {
-        // الصفحة محملة بالفعل، لا حاجة لإظهار loader
+        // If preloaded controller is sitting on a login URL, never show it.
+        await _redirectAwayFromWebLoginIfNeeded(currentUrl);
+        if (!mounted) return;
+
+        // Only reveal after a debounced safety check to prevent showing the
+        // last-rendered login page for a frame.
+        await _ensureWebContentRevealedIfSafe(urlHint: currentUrl);
+
+        // Page is already loaded, no need to show loader
         if (mounted) {
           setState(() {
             _isLoading = false;
@@ -302,15 +498,15 @@ class _WebViewScreenState extends State<WebViewScreen>
             await _checkLoginPageAndShowBiometric(currentUrl);
           }
 
-          // محاولة ملء بيانات الدخول تلقائياً بعد قليل
-          // بدون إرسال تلقائي - المستخدم يجب أن يضغط زر البصمة
+          // Try to auto-fill credentials after a short delay
+          // Without auto-submit - user must press biometric button
           await Future.delayed(const Duration(milliseconds: 300));
           if (mounted) {
             await _autoFillFromStoredCredentials(autoSubmit: false);
           }
         }
       } else {
-        // الصفحة لم تكتمل بعد، أظهر loader
+        // Page not yet complete, show loader
         if (mounted) {
           setState(() {
             _isLoading = true;
@@ -319,7 +515,7 @@ class _WebViewScreenState extends State<WebViewScreen>
       }
     } catch (e) {
       debugPrint('Error checking preloaded page status: $e');
-      // في حالة الخطأ، افترض أن الصفحة تحتاج تحميل
+      // On error, assume page needs loading
       if (mounted) {
         setState(() {
           _isLoading = true;
@@ -424,6 +620,10 @@ class _WebViewScreenState extends State<WebViewScreen>
       final currentUrl = await _controller.currentUrl();
       if (currentUrl == null) return;
 
+      // Only attempt auto-fill on the explicit web login page.
+      // Prevents stale DOM checks from triggering on authenticated pages.
+      if (!_looksLikeWebLoginUrl(currentUrl)) return;
+
       // Check if login form exists on the page
       final hasLoginForm = await _controller.runJavaScriptReturningResult(
         JavaScriptHelpers.generateCheckLoginFormScript(),
@@ -457,6 +657,10 @@ class _WebViewScreenState extends State<WebViewScreen>
 
         if (!isLoginPage) {
           _hasCheckedForLogin = true;
+          _wasLoggedInThisSession = true;
+          debugPrint(
+            '✅ Login successful detected! URL changed from login page',
+          );
 
           if (mounted) {
             setState(() {
@@ -464,32 +668,247 @@ class _WebViewScreenState extends State<WebViewScreen>
             });
           }
 
-          // --- BAGIAN INI DI-COMMENT / DIMATIKAN ---
-          // Kita tidak mau auto-save lagi. Kita mau manual save via tombol.
+          // Check if credentials are already saved
+          final hasExistingCredentials =
+              await SecureStorageService.hasSavedCredentials();
+          debugPrint('📦 Has existing credentials: $hasExistingCredentials');
 
-          /* if (_capturedUsername == null || _capturedPassword == null) {
-            await _extractCredentialsFromForm();
+          if (!hasExistingCredentials && mounted) {
+            // Show dialog asking user to save credentials and enable biometric
+            debugPrint('🔔 Showing biometric prompt dialog...');
+            await _showSaveBiometricPromptDialog();
           }
-
-          if (mounted) {
-            final hasExistingCredentials = await SecureStorageService.hasSavedCredentials();
-            
-            if (!hasExistingCredentials) {
-              if (_capturedUsername != null &&
-                  _capturedUsername!.isNotEmpty &&
-                  _capturedPassword != null &&
-                  _capturedPassword!.isNotEmpty) {
-                 // ... kode auto save lama ...
-              }
-            }
-          } 
-          */
-          // -----------------------------------------
         }
       }
     } catch (e) {
       debugPrint('Error checking for successful login: $e');
     }
+  }
+
+  /// Show dialog asking user to save credentials and enable biometric after first login
+  Future<void> _showSaveBiometricPromptDialog() async {
+    if (!mounted) return;
+
+    debugPrint('📱 _showSaveBiometricPromptDialog called');
+
+    final l10n = AppLocalizations.of(context);
+    final isBiometricAvailable = await BiometricService.isAvailable();
+    debugPrint('👆 Biometric available: $isBiometricAvailable');
+
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.fingerprint, color: Color(0xFFA21955)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                isBiometricAvailable
+                    ? l10n.enableBiometricQuestion
+                    : (l10n.isArabic
+                          ? 'حفظ بيانات الدخول؟'
+                          : 'Save Credentials?'),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          isBiometricAvailable
+              ? l10n.enableBiometricDescription
+              : (l10n.isArabic
+                    ? 'هل تريد حفظ بيانات الدخول للمرات القادمة؟'
+                    : 'Would you like to save your credentials for next time?'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.noThanks),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFA21955),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(
+              isBiometricAvailable
+                  ? l10n.yesSaveBiometric
+                  : (l10n.isArabic ? 'نعم، احفظ' : 'Yes, Save'),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    debugPrint('📝 User chose to save: $shouldSave');
+
+    if (shouldSave == true && mounted) {
+      // Show input dialog to get credentials from user
+      await _showCredentialInputForBiometric(isBiometricAvailable);
+    }
+  }
+
+  /// Show dialog to input credentials for biometric setup
+  Future<void> _showCredentialInputForBiometric(bool enableBiometric) async {
+    if (!mounted) return;
+
+    final l10n = AppLocalizations.of(context);
+    final usernameController = TextEditingController();
+    final passwordController = TextEditingController();
+
+    // Try to pre-fill with captured credentials if available
+    if (_capturedUsername != null && _capturedUsername!.isNotEmpty) {
+      usernameController.text = _capturedUsername!;
+    }
+    if (_capturedPassword != null && _capturedPassword!.isNotEmpty) {
+      passwordController.text = _capturedPassword!;
+    }
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.lock, color: Color(0xFFA21955)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                l10n.isArabic ? 'أدخل بيانات الدخول' : 'Enter Credentials',
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                l10n.isArabic
+                    ? 'أدخل بيانات الدخول لحفظها واستخدام البصمة:'
+                    : 'Enter your credentials to save and enable biometric:',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: usernameController,
+                decoration: InputDecoration(
+                  labelText: l10n.isArabic
+                      ? 'اسم المستخدم / البريد'
+                      : 'Username / Email',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.person),
+                ),
+                autofocus: true,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                decoration: InputDecoration(
+                  labelText: l10n.isArabic ? 'كلمة المرور' : 'Password',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.lock),
+                ),
+                obscureText: true,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (usernameController.text.trim().isNotEmpty &&
+                  passwordController.text.isNotEmpty) {
+                Navigator.of(ctx).pop(true);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFA21955),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(l10n.save),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true && mounted) {
+      final username = usernameController.text.trim();
+      final password = passwordController.text;
+
+      try {
+        // Save credentials
+        await SecureStorageService.saveCredentials(
+          username: username,
+          password: password,
+        );
+
+        debugPrint('✅ Credentials saved successfully');
+
+        // Enable biometric if available
+        if (enableBiometric) {
+          await SecureStorageService.setBiometricEnabled(true);
+          debugPrint('✅ Biometric enabled');
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.white),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(l10n.credentialsSavedWithBiometric)),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.white),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        l10n.isArabic
+                            ? 'تم حفظ بيانات الدخول بنجاح!'
+                            : 'Credentials saved successfully!',
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('❌ Error saving credentials: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+
+    usernameController.dispose();
+    passwordController.dispose();
   }
 
   /// Check if current page is a login page
@@ -515,17 +934,13 @@ class _WebViewScreenState extends State<WebViewScreen>
         debugPrint('👆 Biometric available on device: $_isBiometricAvailable');
       }
 
-      // Check if we're on login page (check URL first)
-      bool isLoginPageNow = url.toLowerCase().contains('login');
+      // IMPORTANT: biometric button should only appear on the explicit web
+      // login URL. DOM-based checks can be transient/stale during navigation
+      // (and caused false positives on /my).
+      final isLoginPageNow = _looksLikeWebLoginUrl(url);
 
       debugPrint('🔍 URL: $url');
-      debugPrint('🔍 URL contains login: $isLoginPageNow');
-
-      // If URL doesn't contain 'login', check for login form
-      if (!isLoginPageNow) {
-        isLoginPageNow = await _isLoginPage(url);
-        debugPrint('🔍 Has login form: $isLoginPageNow');
-      }
+      debugPrint('🔍 URL looks like login: $isLoginPageNow');
 
       if (mounted) {
         // Always show button if biometric is available AND we're on login page
@@ -585,8 +1000,9 @@ class _WebViewScreenState extends State<WebViewScreen>
             _capturedPassword != null &&
             _capturedPassword!.isNotEmpty) {
           // Minta konfirmasi sidik jari untuk menyimpan
+          final l10n = AppLocalizations.of(context);
           final authenticated = await BiometricService.authenticate(
-            reason: 'Confirm fingerprint to SAVE this password',
+            reason: l10n.fingerprintToSave,
           );
 
           if (authenticated) {
@@ -595,40 +1011,85 @@ class _WebViewScreenState extends State<WebViewScreen>
               username: _capturedUsername!,
               password: _capturedPassword!,
             );
-            await SecureStorageService.setBiometricEnabled(true);
 
+            // Ask user if they want to enable biometric for future logins
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Row(
+              final shouldEnableBiometric = await showDialog<bool>(
+                context: context,
+                barrierDismissible: false,
+                builder: (ctx) => AlertDialog(
+                  title: Row(
                     children: [
-                      Icon(Icons.save, color: Colors.white),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Password SAVED! Next time, just scan your finger.',
-                        ),
-                      ),
+                      const Icon(Icons.fingerprint, color: Color(0xFFA21955)),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(l10n.enableBiometricQuestion)),
                     ],
                   ),
-                  backgroundColor: Colors.green,
-                  duration: Duration(seconds: 3),
+                  content: Text(l10n.enableBiometricDescription),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: Text(l10n.noThanks),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFA21955),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: Text(l10n.yesSaveBiometric),
+                    ),
+                  ],
                 ),
               );
 
-              // Opsional: Langsung submit form setelah simpan
-              await _autoFillFromStoredCredentials(autoSubmit: true);
+              if (shouldEnableBiometric == true) {
+                await SecureStorageService.setBiometricEnabled(true);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.save, color: Colors.white),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(l10n.credentialsSavedWithBiometric),
+                        ),
+                      ],
+                    ),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(seconds: 3),
+                  ),
+                );
+                // Opsional: Langsung submit form setelah simpan
+                await _autoFillFromStoredCredentials(autoSubmit: true);
+              } else {
+                // User chose not to enable biometric
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.save, color: Colors.white),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(l10n.credentialsSavedWithoutBiometric),
+                        ),
+                      ],
+                    ),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(seconds: 3),
+                  ),
+                );
+              }
             }
           }
         } else {
           // Jika user menekan tombol tapi form masih kosong
           debugPrint('⚠️ Form is empty, cannot save');
           if (mounted) {
+            final l10n = AppLocalizations.of(context);
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  '⚠️ Enter your Username & Password first, then press this button to save.',
-                ),
+              SnackBar(
+                content: Text(l10n.enterCredentialsFirst),
                 backgroundColor: Colors.orange,
               ),
             );
@@ -640,17 +1101,37 @@ class _WebViewScreenState extends State<WebViewScreen>
         // ============================================================
         debugPrint('🔑 Mode: Login with Saved Data');
 
+        // Check if biometric is enabled by user
+        final isBiometricEnabled =
+            await SecureStorageService.isBiometricEnabled();
+
+        if (!isBiometricEnabled) {
+          // Biometric disabled - show message to enable it first
+          if (mounted) {
+            final l10n = AppLocalizations.of(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(l10n.biometricDisabledMessage),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+          return;
+        }
+
+        final l10n = AppLocalizations.of(context);
         final authenticated = await BiometricService.authenticate(
-          reason: 'Scan fingerprint to LOGIN',
+          reason: l10n.fingerprintToLogin,
         );
 
         if (authenticated) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Authentication Successful, Logging in...'),
+              SnackBar(
+                content: Text(l10n.authSuccessful),
                 backgroundColor: Colors.green,
-                duration: Duration(milliseconds: 1000),
+                duration: const Duration(milliseconds: 1000),
               ),
             );
           }
@@ -810,45 +1291,98 @@ class _WebViewScreenState extends State<WebViewScreen>
 
           debugPrint('✅ Credentials saved successfully from biometric dialog');
 
-          // Auto-enable biometric if available
+          // Ask user about biometric if available
           final isBiometricAvailable = await BiometricService.isAvailable();
-          if (isBiometricAvailable) {
-            try {
-              await SecureStorageService.setBiometricEnabled(true);
-              debugPrint('✅ Biometric enabled automatically');
+          if (isBiometricAvailable && mounted) {
+            final l10n = AppLocalizations.of(context);
+            // Show dialog asking user if they want to enable biometric
+            final shouldEnableBiometric = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) => AlertDialog(
+                title: Row(
+                  children: [
+                    const Icon(Icons.fingerprint, color: Color(0xFFA21955)),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(l10n.enableBiometricQuestion)),
+                  ],
+                ),
+                content: Text(l10n.enableBiometricDescription),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(l10n.noThanks),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFA21955),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(l10n.yesSaveBiometric),
+                  ),
+                ],
+              ),
+            );
 
+            if (shouldEnableBiometric == true) {
+              try {
+                await SecureStorageService.setBiometricEnabled(true);
+                debugPrint('✅ Biometric enabled by user choice');
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.check_circle, color: Colors.white),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(l10n.credentialsSavedWithBiometric),
+                          ),
+                        ],
+                      ),
+                      backgroundColor: Colors.green,
+                      duration: const Duration(seconds: 4),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+
+                // Auto-login with saved credentials
+                await Future.delayed(const Duration(milliseconds: 500));
+                await _autoFillFromStoredCredentials(autoSubmit: false);
+              } catch (e) {
+                debugPrint('⚠️ Error enabling biometric: $e');
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Credentials saved but biometric failed to enable',
+                      ),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                }
+              }
+            } else {
+              // User chose not to enable biometric
+              debugPrint('ℹ️ User chose not to enable biometric');
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
+                  SnackBar(
                     content: Row(
                       children: [
-                        Icon(Icons.check_circle, color: Colors.white),
-                        SizedBox(width: 12),
-                        Text(
-                          'Credentials saved and biometric enabled! You can now use fingerprint login.',
+                        const Icon(Icons.check_circle, color: Colors.white),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(l10n.credentialsSavedWithoutBiometric),
                         ),
                       ],
                     ),
                     backgroundColor: Colors.green,
-                    duration: Duration(seconds: 4),
+                    duration: const Duration(seconds: 3),
                     behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
-
-              // Auto-login with saved credentials (after saving from biometric button)
-              // Don't auto-submit here - user should press biometric button
-              await Future.delayed(const Duration(milliseconds: 500));
-              await _autoFillFromStoredCredentials(autoSubmit: false);
-            } catch (e) {
-              debugPrint('⚠️ Error enabling biometric: $e');
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Credentials saved but biometric failed to enable',
-                    ),
-                    backgroundColor: Colors.orange,
                   ),
                 );
               }
@@ -1165,34 +1699,86 @@ class _WebViewScreenState extends State<WebViewScreen>
 
       debugPrint('✅ Credentials saved and verified successfully');
 
-      // Check if biometric is available
+      // Check if biometric is available and ask user
       final isBiometricAvailable = await BiometricService.isAvailable();
 
-      if (isBiometricAvailable) {
-        // Auto-enable biometric if available (no dialog - automatic)
-        try {
-          await SecureStorageService.setBiometricEnabled(true);
-          debugPrint('✅ Biometric enabled automatically');
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Row(
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.white),
-                    SizedBox(width: 12),
-                    Text('Credentials saved and biometric enabled!'),
-                  ],
-                ),
-                backgroundColor: Colors.green,
-                duration: Duration(seconds: 3),
-                behavior: SnackBarBehavior.floating,
+      if (isBiometricAvailable && mounted) {
+        final l10n = AppLocalizations.of(context);
+        // Show dialog asking user if they want to enable biometric
+        final shouldEnableBiometric = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.fingerprint, color: Color(0xFFA21955)),
+                const SizedBox(width: 12),
+                Expanded(child: Text(l10n.enableBiometricQuestion)),
+              ],
+            ),
+            content: Text(l10n.enableBiometricDescription),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: Text(l10n.noThanks),
               ),
-            );
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFA21955),
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(l10n.yesSaveBiometric),
+              ),
+            ],
+          ),
+        );
+
+        if (shouldEnableBiometric == true) {
+          try {
+            await SecureStorageService.setBiometricEnabled(true);
+            debugPrint('✅ Biometric enabled by user choice');
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.white),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(l10n.credentialsSavedWithBiometric)),
+                    ],
+                  ),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          } catch (e) {
+            debugPrint('⚠️ Error enabling biometric: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.white),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text('Credentials saved! ${e.toString()}'),
+                      ),
+                    ],
+                  ),
+                  backgroundColor: Colors.orange,
+                  duration: const Duration(seconds: 3),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
           }
-        } catch (e) {
-          debugPrint('⚠️ Error enabling biometric: $e');
-          // Continue even if biometric enabling fails
+        } else {
+          // User chose not to enable biometric
+          debugPrint('ℹ️ User chose not to enable biometric');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -1200,17 +1786,19 @@ class _WebViewScreenState extends State<WebViewScreen>
                   children: [
                     const Icon(Icons.check_circle, color: Colors.white),
                     const SizedBox(width: 12),
-                    Expanded(child: Text('Credentials saved! ${e.toString()}')),
+                    Expanded(
+                      child: Text(l10n.credentialsSavedWithoutBiometric),
+                    ),
                   ],
                 ),
-                backgroundColor: Colors.orange,
+                backgroundColor: Colors.green,
                 duration: const Duration(seconds: 3),
                 behavior: SnackBarBehavior.floating,
               ),
             );
           }
         }
-      } else {
+      } else if (!isBiometricAvailable) {
         // Biometric not available - just show save success
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1375,16 +1963,17 @@ class _WebViewScreenState extends State<WebViewScreen>
     }
   }
 
-  /// Save credentials and enable biometric
+  /// Save credentials and ask user about biometric
   Future<void> _saveCredentialsAndEnableBiometric(
     String username,
     String password,
-    bool enableBiometric,
+    bool askAboutBiometric,
   ) async {
     if (!mounted) return;
 
-    // Save ScaffoldMessenger before async operations
+    // Save ScaffoldMessenger and l10n before async operations
     final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final l10n = AppLocalizations.of(context);
 
     try {
       // Save credentials securely
@@ -1401,49 +1990,100 @@ class _WebViewScreenState extends State<WebViewScreen>
 
       debugPrint('✅ Credentials saved successfully');
 
-      // Auto-enable biometric if requested and available
-      if (enableBiometric) {
+      // Ask user about biometric if requested and available
+      if (askAboutBiometric) {
         final isBiometricAvailable = await BiometricService.isAvailable();
-        if (isBiometricAvailable) {
-          try {
-            await SecureStorageService.setBiometricEnabled(true);
-            debugPrint('✅ Biometric enabled automatically');
+        if (isBiometricAvailable && mounted) {
+          // Show dialog asking user if they want to enable biometric
+          final shouldEnableBiometric = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.fingerprint, color: Color(0xFFA21955)),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(l10n.enableBiometricQuestion)),
+                ],
+              ),
+              content: Text(l10n.enableBiometricDescription),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(l10n.noThanks),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFA21955),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text(l10n.yesSaveBiometric),
+                ),
+              ],
+            ),
+          );
 
+          if (shouldEnableBiometric == true) {
+            try {
+              await SecureStorageService.setBiometricEnabled(true);
+              debugPrint('✅ Biometric enabled by user choice');
+
+              if (mounted) {
+                scaffoldMessenger.showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.check_circle, color: Colors.white),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(l10n.credentialsSavedWithBiometric),
+                        ),
+                      ],
+                    ),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(seconds: 4),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            } catch (e) {
+              debugPrint('⚠️ Error enabling biometric: $e');
+              if (mounted) {
+                scaffoldMessenger.showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Credentials saved, but biometric failed to enable. You can enable it later from Settings.',
+                    ),
+                    backgroundColor: Colors.orange,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              }
+            }
+          } else {
+            // User chose not to enable biometric
+            debugPrint('ℹ️ User chose not to enable biometric');
             if (mounted) {
               scaffoldMessenger.showSnackBar(
-                const SnackBar(
+                SnackBar(
                   content: Row(
                     children: [
-                      Icon(Icons.check_circle, color: Colors.white),
-                      SizedBox(width: 12),
+                      const Icon(Icons.check_circle, color: Colors.white),
+                      const SizedBox(width: 12),
                       Expanded(
-                        child: Text(
-                          'Credentials saved and biometric login enabled! You can now use fingerprint/Face ID.',
-                        ),
+                        child: Text(l10n.credentialsSavedWithoutBiometric),
                       ),
                     ],
                   ),
                   backgroundColor: Colors.green,
-                  duration: Duration(seconds: 4),
+                  duration: const Duration(seconds: 3),
                   behavior: SnackBarBehavior.floating,
                 ),
               );
             }
-          } catch (e) {
-            debugPrint('⚠️ Error enabling biometric: $e');
-            if (mounted) {
-              scaffoldMessenger.showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Credentials saved, but biometric failed to enable. You can enable it later from Settings.',
-                  ),
-                  backgroundColor: Colors.orange,
-                  duration: Duration(seconds: 3),
-                ),
-              );
-            }
           }
-        } else {
+        } else if (!isBiometricAvailable) {
           if (mounted) {
             scaffoldMessenger.showSnackBar(
               const SnackBar(
@@ -1659,14 +2299,15 @@ class _WebViewScreenState extends State<WebViewScreen>
       ),
     );
 
+    // Get values before disposing
+    final username = usernameController.text.trim();
+    final password = passwordController.text;
+
     // Dispose controllers
     usernameController.dispose();
     passwordController.dispose();
 
     if (result == true && mounted) {
-      final username = usernameController.text.trim();
-      final password = passwordController.text;
-
       if (username.isNotEmpty && password.isNotEmpty) {
         try {
           // Save credentials securely
@@ -1683,36 +2324,87 @@ class _WebViewScreenState extends State<WebViewScreen>
 
           debugPrint('✅ Credentials saved successfully from manual input');
 
-          // Auto-enable biometric if available
+          // Ask user about biometric if available
           final isBiometricAvailable = await BiometricService.isAvailable();
-          if (isBiometricAvailable) {
-            try {
-              await SecureStorageService.setBiometricEnabled(true);
-              debugPrint('✅ Biometric enabled automatically');
+          if (isBiometricAvailable && mounted) {
+            final l10n = AppLocalizations.of(context);
+            // Show dialog asking user if they want to enable biometric
+            final shouldEnableBiometric = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) => AlertDialog(
+                title: Row(
+                  children: [
+                    const Icon(Icons.fingerprint, color: Color(0xFFA21955)),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(l10n.enableBiometricQuestion)),
+                  ],
+                ),
+                content: Text(l10n.enableBiometricDescription),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(l10n.noThanks),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFA21955),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(l10n.yesSaveBiometric),
+                  ),
+                ],
+              ),
+            );
 
+            if (shouldEnableBiometric == true) {
+              try {
+                await SecureStorageService.setBiometricEnabled(true);
+                debugPrint('✅ Biometric enabled by user choice');
+
+                if (mounted) {
+                  scaffoldMessenger.showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.check_circle, color: Colors.white),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(l10n.credentialsSavedWithBiometric),
+                          ),
+                        ],
+                      ),
+                      backgroundColor: Colors.green,
+                      duration: const Duration(seconds: 4),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              } catch (e) {
+                debugPrint('⚠️ Error enabling biometric: $e');
+              }
+            } else {
+              // User chose not to enable biometric
+              debugPrint('ℹ️ User chose not to enable biometric');
               if (mounted) {
                 scaffoldMessenger.showSnackBar(
-                  const SnackBar(
+                  SnackBar(
                     content: Row(
                       children: [
-                        Icon(Icons.check_circle, color: Colors.white),
-                        SizedBox(width: 12),
+                        const Icon(Icons.check_circle, color: Colors.white),
+                        const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            'Credentials saved and biometric login enabled! You can now use fingerprint/Face ID.',
-                          ),
+                          child: Text(l10n.credentialsSavedWithoutBiometric),
                         ),
                       ],
                     ),
                     backgroundColor: Colors.green,
-                    duration: Duration(seconds: 4),
+                    duration: const Duration(seconds: 3),
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
               }
-            } catch (e) {
-              debugPrint('⚠️ Error enabling biometric: $e');
-              // Continue even if biometric enabling fails
             }
           } else {
             if (mounted) {
@@ -1796,7 +2488,7 @@ class _WebViewScreenState extends State<WebViewScreen>
         title: const Text('Logout'),
         content: const Text(
           'Are you sure you want to logout?\n\n'
-          'Note: Saved credentials will not be deleted.',
+          'All saved data will be deleted.',
         ),
         actions: [
           TextButton(
@@ -1828,7 +2520,11 @@ class _WebViewScreenState extends State<WebViewScreen>
           });
         }
 
-        // Clear cache and cookies first
+        // Delete all saved data from secure storage
+        await SecureStorageService.deleteCredentials();
+        debugPrint('✅ All saved credentials deleted');
+
+        // Clear cache and cookies
         await _controller.clearCache();
         await _controller.clearLocalStorage();
 
@@ -1843,11 +2539,13 @@ class _WebViewScreenState extends State<WebViewScreen>
           });
         }
 
-        // Reload the login page
-        await _controller.loadRequest(Uri.parse(widget.url));
-
-        // Reset initial URL
-        _initialUrl = widget.url;
+        // Navigate back to the original login page
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const SplashScreen()),
+            (route) => false,
+          );
+        }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1856,7 +2554,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                 children: [
                   Icon(Icons.check_circle, color: Colors.white),
                   SizedBox(width: 12),
-                  Text('Logged out successfully'),
+                  Text('Logged out and all data cleared'),
                 ],
               ),
               backgroundColor: Colors.green,
@@ -2060,10 +2758,12 @@ class _WebViewScreenState extends State<WebViewScreen>
 
     if (!mounted) return;
 
+    final l10n = AppLocalizations.of(context);
+
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Biometric Settings'),
+        title: Text(l10n.biometricSettings),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2075,10 +2775,12 @@ class _WebViewScreenState extends State<WebViewScreen>
                   color: isAvailable ? Colors.green : Colors.red,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  isAvailable
-                      ? 'Biometric available on device'
-                      : 'Biometric not available on device',
+                Expanded(
+                  child: Text(
+                    isAvailable
+                        ? l10n.biometricAvailable
+                        : l10n.biometricNotAvailable,
+                  ),
                 ),
               ],
             ),
@@ -2090,7 +2792,9 @@ class _WebViewScreenState extends State<WebViewScreen>
                   color: isEnabled ? Colors.green : Colors.grey,
                 ),
                 const SizedBox(width: 8),
-                Text(isEnabled ? 'Biometric enabled' : 'Biometric disabled'),
+                Text(
+                  isEnabled ? l10n.biometricEnabled : l10n.biometricDisabled,
+                ),
               ],
             ),
             if (isAvailable) ...[
@@ -2104,8 +2808,8 @@ class _WebViewScreenState extends State<WebViewScreen>
                       SnackBar(
                         content: Text(
                           !isEnabled
-                              ? 'Biometric enabled'
-                              : 'Biometric disabled',
+                              ? l10n.biometricEnabled
+                              : l10n.biometricDisabled,
                         ),
                         backgroundColor: Colors.green,
                       ),
@@ -2116,7 +2820,7 @@ class _WebViewScreenState extends State<WebViewScreen>
                   backgroundColor: isEnabled ? Colors.orange : Colors.green,
                 ),
                 child: Text(
-                  isEnabled ? 'Disable Biometric' : 'Enable Biometric',
+                  isEnabled ? l10n.disableBiometric : l10n.enableBiometric,
                 ),
               ),
             ],
@@ -2125,7 +2829,7 @@ class _WebViewScreenState extends State<WebViewScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text(l10n.close),
           ),
         ],
       ),
@@ -2134,25 +2838,28 @@ class _WebViewScreenState extends State<WebViewScreen>
 
   /// Show app info dialog
   void _showAppInfo() {
+    final l10n = AppLocalizations.of(context);
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('App Information'),
-        content: const Column(
+        title: Text(l10n.appInfo),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('App Name: Jeel ERP'),
-            SizedBox(height: 8),
-            Text('Version: 1.0.0'),
-            SizedBox(height: 8),
-            Text('© 2024 Jeel Engineering'),
+            Text(
+              '${l10n.isArabic ? "اسم التطبيق" : "App Name"}: ${l10n.appName}',
+            ),
+            const SizedBox(height: 8),
+            Text('${l10n.version}: 5'),
+            const SizedBox(height: 8),
+            Text('© ${DateTime.now().year} ${l10n.copyright}'),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text(l10n.close),
           ),
         ],
       ),
@@ -2167,36 +2874,77 @@ class _WebViewScreenState extends State<WebViewScreen>
         if (didPop) return;
 
         final navigator = Navigator.of(context);
-        if (await _controller.canGoBack()) {
-          _controller.goBack();
-        } else {
-          final shouldExit = await showDialog<bool>(
+
+        // Check current URL to decide behavior
+        final currentUrl = await _controller.currentUrl() ?? '';
+        final isOnLoginPage = currentUrl.toLowerCase().contains('login');
+
+        // If on login page or can't go back, show logout dialog
+        if (isOnLoginPage || !(await _controller.canGoBack())) {
+          final shouldLogout = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
-              title: const Text('Close App?'),
-              content: const Text('Are you sure you want to close the app?'),
+              title: const Text('Logout'),
+              content: const Text(
+                'Do you want to logout and return to login page?',
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),
                   child: const Text('Cancel'),
                 ),
-                TextButton(
+                ElevatedButton(
                   onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Yes, Close'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0099A3),
+                  ),
+                  child: const Text('Logout'),
                 ),
               ],
             ),
           );
 
-          if (shouldExit == true) {
-            navigator.pop();
+          if (shouldLogout == true) {
+            // Delete saved credentials
+            await SecureStorageService.deleteCredentials();
+            debugPrint('✅ Credentials deleted on back button');
+
+            // Navigate to app login page
+            if (context.mounted) {
+              navigator.pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginPage()),
+                (route) => false,
+              );
+            }
+          }
+        } else {
+          // Check if going back would lead to login page
+          // Get back forward list isn't directly available, so we go back and check
+          await _controller.goBack();
+
+          // Wait a moment for navigation
+          await Future.delayed(const Duration(milliseconds: 300));
+
+          // Check if we ended up on login page
+          final newUrl = await _controller.currentUrl() ?? '';
+          if (newUrl.toLowerCase().contains('login')) {
+            // We're on login page, redirect to app login instead
+            await SecureStorageService.deleteCredentials();
+            debugPrint('✅ Redirected from web login to app login');
+
+            if (context.mounted) {
+              navigator.pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginPage()),
+                (route) => false,
+              );
+            }
           }
         }
       },
       child: Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
-          backgroundColor: const Color(0xFF0099A3),
+          backgroundColor: const Color(0xFFA21955),
           title: Text(
             widget.title,
             style: const TextStyle(
@@ -2312,66 +3060,15 @@ class _WebViewScreenState extends State<WebViewScreen>
                 ),
               ),
 
-            if (_isLoading && !_isError)
-              ProfessionalLoader(
-                rotationController: _loadingAnimationController,
-              ),
-
-            // Professional Floating Biometric Button with Animation
-            if (_showBiometricButton && !_isLoading && !_isError)
-              Positioned(
-                bottom: 80,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: AnimatedBuilder(
-                    animation: _biometricAnimationController,
-                    builder: (context, child) {
-                      return Transform.scale(
-                        scale: _biometricScaleAnimation.value,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(50),
-                            color: const Color(0xFFA21955),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFFA21955).withOpacity(0.4),
-                                spreadRadius:
-                                    _biometricPulseAnimation.value / 2,
-                                blurRadius: 20 + _biometricPulseAnimation.value,
-                                offset: const Offset(0, 5),
-                              ),
-                            ],
-                          ),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: _isBiometricAuthenticating
-                                  ? null
-                                  : _handleBiometricLogin,
-                              borderRadius: BorderRadius.circular(50),
-                              child: Container(
-                                padding: const EdgeInsets.all(16),
-                                child: _isBiometricAuthenticating
-                                    ? const SizedBox(
-                                        width: 32,
-                                        height: 32,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 3,
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.fingerprint,
-                                        color: Colors.white,
-                                        size: 40,
-                                      ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+            // Keep an opaque loader overlay on top until it is safe to reveal
+            // content. This prevents a 1-frame flash of the web login page
+            // (platform view can briefly render previous content).
+            if ((_isLoading || !_isWebContentVisible) && !_isError)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.white,
+                  child: ProfessionalLoader(
+                    rotationController: _loadingAnimationController,
                   ),
                 ),
               ),

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import '../utils/assets_helper.dart';
 
-/// مؤشر تحميل احترافي مع شعار Jeel
 class ProfessionalLoader extends StatelessWidget {
   final AnimationController rotationController;
   final String? message;
@@ -36,7 +35,6 @@ class ProfessionalLoader extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // شعار Jeel ثابت
             Container(
               width: 70,
               height: 70,
@@ -59,10 +57,9 @@ class ProfessionalLoader extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             
-            // حركة تحميل احترافية - discreteCircular
             LoadingAnimationWidget.discreteCircle(
-              color: const Color(0xFFA21955), // لون #A21955
-              secondRingColor: const Color(0xFF0099A3), // لون #0099A3
+              color: const Color(0xFFA21955),
+              secondRingColor: const Color(0xFF0099A3),
               thirdRingColor: const Color(0xFFA21955),
               size: 45,
             ),

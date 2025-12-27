@@ -6,35 +6,34 @@ class SettingsService {
   static const String _defaultUrl = 'https://erp.jeel.om/web/login';
   static const String _defaultTitle = 'Jeel ERP';
 
-  // حفظ URL
+  // Save URL
   static Future<void> saveUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_urlKey, url);
   }
 
-  // قراءة URL
+  // Get URL
   static Future<String> getUrl() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_urlKey) ?? _defaultUrl;
   }
 
-  // حفظ العنوان
+  // Save Title
   static Future<void> saveTitle(String title) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_titleKey, title);
   }
 
-  // قراءة العنوان
+  // Get Title
   static Future<String> getTitle() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_titleKey) ?? _defaultTitle;
   }
 
-  // إعادة تعيين الإعدادات
+  // Reset Settings
   static Future<void> resetSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_urlKey);
     await prefs.remove(_titleKey);
   }
 }
-

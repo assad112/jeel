@@ -1,26 +1,0 @@
-📍 المسار الكامل لتخزين أيقونة Jeel:
-
-C:\Users\HP\AndroidStudioProjects\expedu\assets\icons\jeel_logo.png
-
----
-
-📁 المسار النسبي (من مجلد المشروع):
-assets\icons\jeel_logo.png
-
----
-
-✅ الخطوات:
-1. افتح مجلد: C:\Users\HP\AndroidStudioProjects\expedu\assets\icons\
-2. ضع الأيقونة باسم: jeel_logo.png
-3. تأكد من أن الحجم: 1024x1024 بكسل أو أكبر
-4. تأكد من الصيغة: PNG
-
----
-
-💡 نصيحة:
-يمكنك نسخ الأيقونة ولصقها مباشرة في المجلد:
-C:\Users\HP\AndroidStudioProjects\expedu\assets\icons\
-
-ثم غير الاسم إلى: jeel_logo.png
-
-

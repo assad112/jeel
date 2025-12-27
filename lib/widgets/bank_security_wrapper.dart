@@ -5,11 +5,6 @@ import 'package:screen_protector/screen_protector.dart';
 import '../services/security_service.dart';
 
 /// Bank-Level Security Wrapper
-/// يوفر حماية شاملة للتطبيق:
-/// 1. منع التقاط الشاشة (Screenshot Prevention)
-/// 2. كشف كسر الحماية (Jailbreak/Root Detection)
-/// 3. مهلة عدم النشاط (Inactivity Timeout)
-/// 4. حماية عند الانتقال للخلفية (Background Protection)
 class BankSecurityWrapper extends StatefulWidget {
   final Widget child;
   final bool enableScreenshotProtection;
@@ -58,20 +53,16 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     super.dispose();
   }
 
-  /// تهيئة الحماية الأمنية
   Future<void> _initializeSecurity() async {
     try {
-      // 1. منع التقاط الشاشة
       if (widget.enableScreenshotProtection) {
         await _enableScreenshotProtection();
       }
 
-      // 2. فحص كسر الحماية
       if (widget.enableJailbreakDetection) {
         await _performJailbreakCheck();
       }
 
-      // 3. طباعة معلومات الأمان (في وضع التطوير)
       if (mounted) {
         await SecurityService.printSecurityInfo();
       }
@@ -80,13 +71,10 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     }
   }
 
-  /// تفعيل حماية التقاط الشاشة
   Future<void> _enableScreenshotProtection() async {
     try {
-      // منع التقاط الشاشة
       await ScreenProtector.protectDataLeakageOn();
       
-      // منع تسجيل الشاشة (Android 11+)
       await ScreenProtector.preventScreenshotOn();
       
       debugPrint('🔒 Screenshot protection enabled');
@@ -95,13 +83,12 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     }
   }
 
-  /// فحص كسر الحماية (Jailbreak/Root Detection)
   Future<void> _performJailbreakCheck() async {
     try {
       final result = await SecurityService.performSecurityCheck(
-        allowEmulator: true, // السماح بالمحاكي في التطوير
-        allowRootedDevices: false, // عدم السماح بالأجهزة المكسورة
-        allowDeveloperMode: true, // السماح بوضع المطور
+        allowEmulator: true,
+        allowRootedDevices: false,
+        allowDeveloperMode: true,
       );
 
       if (mounted) {
@@ -114,7 +101,6 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
           }
         });
 
-        // عرض تحذيرات إذا كانت موجودة
         if (result.warnings.isNotEmpty && widget.showSecurityWarnings) {
           for (final warning in result.warnings) {
             debugPrint('⚠️ Security Warning: $warning');
@@ -126,7 +112,6 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     }
   }
 
-  /// بدء مؤقت عدم النشاط
   void _startInactivityTimer() {
     if (!widget.enableInactivityTimeout) return;
 
@@ -140,13 +125,11 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     });
   }
 
-  /// إعادة تعيين مؤقت عدم النشاط
   void _resetInactivityTimer() {
     if (!widget.enableInactivityTimeout) return;
     _startInactivityTimer();
   }
 
-  /// عرض حوار عدم النشاط
   void _showInactivityDialog() {
     if (!mounted) return;
     
@@ -177,14 +160,12 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     );
   }
 
-  /// مراقبة حالة التطبيق (Foreground/Background)
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
     switch (state) {
       case AppLifecycleState.resumed:
-        // التطبيق عاد للواجهة
         if (mounted) {
           setState(() {
             _showBlurOverlay = false;
@@ -196,10 +177,9 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
 
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
-        // التطبيق انتقل للخلفية
         if (mounted) {
           setState(() {
-            _showBlurOverlay = true; // إخفاء المحتوى في App Switcher
+            _showBlurOverlay = true;
           });
           _inactivityTimer?.cancel();
           debugPrint('📱 App paused/inactive');
@@ -218,7 +198,6 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
 
   @override
   Widget build(BuildContext context) {
-    // إذا فشل فحص الأمان، عرض شاشة الخطأ
     if (!_isSecurityCheckPassed) {
       return _buildSecurityErrorScreen();
     }
@@ -229,10 +208,8 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
       onPanDown: (_) => _resetInactivityTimer(),
       child: Stack(
         children: [
-          // المحتوى الرئيسي
           widget.child,
 
-          // طبقة التعتيم عند الانتقال للخلفية
           if (_showBlurOverlay)
             Container(
               color: Colors.white,
@@ -263,7 +240,6 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
     );
   }
 
-  /// بناء شاشة خطأ الأمان
   Widget _buildSecurityErrorScreen() {
     return Scaffold(
       backgroundColor: Colors.red.shade50,
@@ -327,7 +303,7 @@ class _BankSecurityWrapperState extends State<BankSecurityWrapper>
                 const SizedBox(height: 40),
                 ElevatedButton.icon(
                   onPressed: () {
-                    SystemNavigator.pop(); // إغلاق التطبيق
+                    SystemNavigator.pop();
                   },
                   icon: const Icon(Icons.exit_to_app),
                   label: const Text('Exit'),

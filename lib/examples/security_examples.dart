@@ -4,10 +4,7 @@ import 'package:flutter/material.dart';
 import '../widgets/bank_security_wrapper.dart';
 import '../services/security_service.dart';
 
-/// أمثلة على استخدام BankSecurityWrapper
-
 // ══════════════════════════════════════════════════════════════
-// مثال 1: الاستخدام الأساسي (جميع الميزات مفعّلة)
 // ══════════════════════════════════════════════════════════════
 
 class BasicSecurityExample extends StatelessWidget {
@@ -22,7 +19,6 @@ class BasicSecurityExample extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════
-// مثال 2: تخصيص مهلة عدم النشاط
 // ══════════════════════════════════════════════════════════════
 
 class CustomTimeoutExample extends StatelessWidget {
@@ -31,10 +27,9 @@ class CustomTimeoutExample extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BankSecurityWrapper(
-      inactivityTimeout: const Duration(minutes: 3), // 3 دقائق
+      inactivityTimeout: const Duration(minutes: 3),
       onInactivityTimeout: () {
         debugPrint('⏰ User has been inactive for 3 minutes');
-        // يمكنك إضافة منطق تسجيل الخروج هنا
       },
       child: const MyApp(),
     );
@@ -42,7 +37,6 @@ class CustomTimeoutExample extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════
-// مثال 3: تعطيل بعض الميزات
 // ══════════════════════════════════════════════════════════════
 
 class DisabledFeaturesExample extends StatelessWidget {
@@ -51,16 +45,15 @@ class DisabledFeaturesExample extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const BankSecurityWrapper(
-      enableScreenshotProtection: true,  // مفعّل
-      enableJailbreakDetection: false,   // معطّل
-      enableInactivityTimeout: false,    // معطّل
+      enableScreenshotProtection: true,
+      enableJailbreakDetection: false,
+      enableInactivityTimeout: false,
       child: MyApp(),
     );
   }
 }
 
 // ══════════════════════════════════════════════════════════════
-// مثال 4: معالجة الأحداث الأمنية
 // ══════════════════════════════════════════════════════════════
 
 class SecurityEventsExample extends StatelessWidget {
@@ -70,14 +63,11 @@ class SecurityEventsExample extends StatelessWidget {
   Widget build(BuildContext context) {
     return BankSecurityWrapper(
       onInactivityTimeout: () {
-        // معالجة انتهاء الجلسة
         debugPrint('⏰ Session timeout');
         Navigator.of(context).pushReplacementNamed('/login');
       },
       onSecurityViolation: () {
-        // معالجة انتهاك أمني
         debugPrint('⚠️ Security violation detected');
-        // إرسال تنبيه للسيرفر
         _reportSecurityViolation();
       },
       child: const MyApp(),
@@ -85,13 +75,11 @@ class SecurityEventsExample extends StatelessWidget {
   }
 
   void _reportSecurityViolation() {
-    // إرسال تقرير للسيرفر
     debugPrint('Reporting security violation to server...');
   }
 }
 
 // ══════════════════════════════════════════════════════════════
-// مثال 5: فحص أمني يدوي
 // ══════════════════════════════════════════════════════════════
 
 class ManualSecurityCheckExample extends StatefulWidget {
@@ -191,7 +179,6 @@ class _ManualSecurityCheckExampleState
 }
 
 // ══════════════════════════════════════════════════════════════
-// مثال 6: عرض معلومات الأمان
 // ══════════════════════════════════════════════════════════════
 
 class SecurityInfoScreen extends StatefulWidget {
@@ -302,7 +289,6 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
 }
 
 // ══════════════════════════════════════════════════════════════
-// مثال 7: الوضع الآمن للغاية (Maximum Security)
 // ══════════════════════════════════════════════════════════════
 
 class MaximumSecurityExample extends StatelessWidget {
@@ -314,14 +300,12 @@ class MaximumSecurityExample extends StatelessWidget {
       enableScreenshotProtection: true,
       enableJailbreakDetection: true,
       enableInactivityTimeout: true,
-      inactivityTimeout: const Duration(minutes: 2), // جلسة قصيرة جداً
+      inactivityTimeout: const Duration(minutes: 2),
       showSecurityWarnings: true,
       onInactivityTimeout: () {
-        // تسجيل خروج فوري
         _performLogout(context);
       },
       onSecurityViolation: () {
-        // إغلاق التطبيق
         _closeApp();
       },
       child: const MyApp(),
@@ -340,7 +324,6 @@ class MaximumSecurityExample extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════
-// التطبيق المثالي (Demo App)
 // ══════════════════════════════════════════════════════════════
 
 class MyApp extends StatelessWidget {

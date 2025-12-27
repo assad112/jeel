@@ -1,7 +1,4 @@
-/// ملف مثال يوضح كيفية استخدام الصور والأيقونات
-/// 
-/// هذا الملف يحتوي على أمثلة عملية لاستخدام AppAssets
-/// يمكنك حذف هذا الملف بعد فهم كيفية الاستخدام
+library;
 
 import 'package:flutter/material.dart';
 import 'assets_helper.dart';
@@ -18,7 +15,6 @@ class AssetsExample extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // مثال 1: استخدام صورة مباشرة
           _buildExampleCard(
             title: 'مثال 1: استخدام صورة مباشرة',
             child: Image.asset(
@@ -33,7 +29,6 @@ class AssetsExample extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // مثال 2: استخدام أيقونة مباشرة
           _buildExampleCard(
             title: 'مثال 2: استخدام أيقونة مباشرة',
             child: Image.asset(
@@ -48,7 +43,6 @@ class AssetsExample extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // مثال 3: استخدام الدالة المساعدة
           _buildExampleCard(
             title: 'مثال 3: استخدام الدالة المساعدة',
             child: Image.asset(
@@ -63,7 +57,6 @@ class AssetsExample extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // مثال 4: استخدام في قائمة
           _buildExampleCard(
             title: 'مثال 4: استخدام في قائمة',
             child: ListTile(
@@ -82,7 +75,6 @@ class AssetsExample extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // مثال 5: استخدام مع Container
           _buildExampleCard(
             title: 'مثال 5: استخدام مع Container',
             child: Container(

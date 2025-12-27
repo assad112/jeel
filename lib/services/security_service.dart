@@ -1,14 +1,11 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:safe_device/safe_device.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
-/// خدمة الأمان الشاملة للتطبيق (Bank-Level Security)
 class SecurityService {
   static final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
 
-  /// التحقق من كسر الحماية (Jailbreak/Root Detection)
   static Future<bool> isDeviceCompromised() async {
     try {
       final isJailbroken = await SafeDevice.isJailBroken;
@@ -22,12 +19,10 @@ class SecurityService {
       return false;
     } catch (e) {
       debugPrint('Error checking device compromise: $e');
-      // في حالة الخطأ، نفترض أن الجهاز آمن (لعدم حظر المستخدمين بشكل خاطئ)
       return false;
     }
   }
 
-  /// التحقق من وضع التطوير (Developer Mode)
   static Future<bool> isDeveloperMode() async {
     try {
       return await SafeDevice.isDevelopmentModeEnable;
@@ -37,7 +32,6 @@ class SecurityService {
     }
   }
 
-  /// الحصول على معلومات الجهاز للتحقق من الأمان
   static Future<Map<String, dynamic>> getDeviceSecurityInfo() async {
     final Map<String, dynamic> info = {};
 
@@ -59,7 +53,6 @@ class SecurityService {
         info['isPhysicalDevice'] = iosInfo.isPhysicalDevice;
       }
 
-      // التحقق من كسر الحماية
       info['isCompromised'] = await isDeviceCompromised();
       info['isDeveloperMode'] = await isDeveloperMode();
 
@@ -70,13 +63,11 @@ class SecurityService {
     }
   }
 
-  /// التحقق من أن التطبيق يعمل على جهاز حقيقي وليس محاكي
   static Future<bool> isRealDevice() async {
     try {
       return await SafeDevice.isRealDevice;
     } catch (e) {
       debugPrint('Error checking if real device: $e');
-      // في حالة الخطأ، نستخدم device_info_plus كبديل
       try {
         if (Platform.isAndroid) {
           final androidInfo = await _deviceInfo.androidInfo;
@@ -92,11 +83,10 @@ class SecurityService {
     }
   }
 
-  /// فحص شامل للأمان - يرجع true إذا كان الجهاز آمناً
   static Future<SecurityCheckResult> performSecurityCheck({
-    bool allowEmulator = kDebugMode, // السماح بالمحاكي في وضع التطوير فقط
-    bool allowRootedDevices = false, // عدم السماح بالأجهزة المكسورة الحماية
-    bool allowDeveloperMode = kDebugMode, // السماح بوضع المطور في التطوير فقط
+    bool allowEmulator = kDebugMode,
+    bool allowRootedDevices = false,
+    bool allowDeveloperMode = kDebugMode,
   }) async {
     try {
       final isCompromised = await isDeviceCompromised();
@@ -106,22 +96,18 @@ class SecurityService {
       final List<String> warnings = [];
       final List<String> errors = [];
 
-      // التحقق من كسر الحماية
       if (isCompromised && !allowRootedDevices) {
         errors.add('Device is jailbroken or rooted. This app cannot run on compromised devices.');
       }
 
-      // التحقق من المحاكي
       if (!isRealDev && !allowEmulator) {
         errors.add('App cannot run on emulator/simulator for security reasons.');
       }
 
-      // التحقق من وضع المطور
       if (isDeveloper && !allowDeveloperMode) {
         warnings.add('Developer mode is enabled on this device.');
       }
 
-      // في وضع الـ Debug، نسمح بكل شيء
       if (kDebugMode) {
         debugPrint('🔓 Debug Mode: Security checks relaxed');
       }
@@ -139,7 +125,7 @@ class SecurityService {
     } catch (e) {
       debugPrint('Error performing security check: $e');
       return SecurityCheckResult(
-        isPassed: true, // في حالة الخطأ، نسمح بالمرور
+        isPassed: true,
         isCompromised: false,
         isRealDevice: true,
         isDeveloperMode: false,
@@ -149,7 +135,6 @@ class SecurityService {
     }
   }
 
-  /// طباعة معلومات الأمان للتطبيق
   static Future<void> printSecurityInfo() async {
     debugPrint('🔒 Security Information:');
     debugPrint('═' * 50);
@@ -163,7 +148,6 @@ class SecurityService {
   }
 }
 
-/// نتيجة فحص الأمان
 class SecurityCheckResult {
   final bool isPassed;
   final bool isCompromised;

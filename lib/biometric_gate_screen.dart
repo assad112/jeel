@@ -44,7 +44,6 @@ class _BiometricGateScreenState extends State<BiometricGateScreen> {
           _isChecking = false;
         });
 
-        // تم تعطيل البصمة التلقائية - سيتم استخدام زر البصمة في صفحة تسجيل الدخول فقط
         // Always go directly to splash - biometric will be handled by the button in login page
         _navigateToSplash();
       }
